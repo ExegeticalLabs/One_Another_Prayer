@@ -21,13 +21,11 @@ import { Modal } from './components/Modal';
 import { AdminPanel } from './components/AdminPanel';
 import { triagePrayer } from './services/aiService';
 
-import { JoinChurchScreen } from './components/JoinChurchScreen';
-
 export default function App() {
   const [theme, setTheme] = useLS("pf_theme", "dark");
   const [tab, setTab] = useState("feed");
   
-  const { user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, prayerStats, addJournalEntry, addPersonalLog, toggleLocalBookmark } = useAppData();
+  const { user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, prayerStats, addJournalEntry, addPersonalLog, toggleLocalBookmark, wipeAllLocalData } = useAppData();
 
   const [goals] = useLS<any>("pf_goals_v9", { church: { mins: 10, count: 5, needs: 3 }, personal: { mins: 5, count: 3 } });
 
@@ -38,6 +36,7 @@ export default function App() {
   const [composeText, setComposeText] = useState("");
   const [composeCat, setComposeCat] = useState("Other");
   const [composeAnon, setComposeAnon] = useState(false);
+  const [shareToFeed, setShareToFeed] = useState(false);
   const [isFork, setIsFork] = useState(false);
   
   const [markAnsweredPrompt, setMarkAnsweredPrompt] = useState<any>(null);
@@ -61,7 +60,7 @@ export default function App() {
       await signInWithPopup(auth, provider);
     } catch (e) {
       console.error(e);
-      triggerNotif("Login Failed");
+      triggerNotif("Sign in failed. Check if app is in a new tab.");
     }
   };
 
@@ -125,11 +124,14 @@ export default function App() {
   const submitCompose = async () => {
     if (!composeText.trim() || !user) return;
     try {
-      if (compose === "journal") {
+      // 1. Save to Journal (always, unless it's a re-share fork of an existing journal entry)
+      if (!isFork) {
         addJournalEntry({ category: composeCat, text: composeText.trim() });
-        triggerNotif("Saved to Journal");
-      } else {
-        triggerNotif("Analyzing prayer...");
+      }
+
+      // 2. Conditionally share with Church Feed
+      if (shareToFeed) {
+        triggerNotif("Sharing with community...");
         const triage = await triagePrayer(composeText.trim());
         
         const prayerRef = await addDoc(collection(db, `churches/${church.id}/prayers`), {
@@ -152,13 +154,17 @@ export default function App() {
           prayTime: 0
         });
 
-        triggerNotif("Shared with Church");
+        triggerNotif(isFork ? "Shared with Church" : "Saved & Shared with Church");
+      } else {
+        triggerNotif("Saved to Private Journal");
       }
+      
       setCompose(null);
       setComposeText("");
       setIsFork(false);
+      setShareToFeed(false);
     } catch (e) {
-      if (compose !== "journal") {
+      if (shareToFeed) {
         handleFirestoreError(e, OperationType.CREATE, 'prayers');
       } else {
         console.error(e);
@@ -171,6 +177,7 @@ export default function App() {
     setComposeText(prefill);
     setComposeCat(category || "Other");
     setComposeAnon(false);
+    setShareToFeed(mode === "feed"); // Default share to true if explicitly sharing (like the "Share" button on a journal entry)
     setIsFork(fork);
   };
 
@@ -289,53 +296,40 @@ export default function App() {
   }, [compose, composeCat]);
 
   if (!authReady) {
-    return <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)'}}>Loading...</div>;
+    return <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)', background: theme === 'dark' ? '#0d1117' : '#f7fbff'}}>
+      <div style={{ textAlign: 'center' }}>
+        <Wind className="animate-pulse" size={48} color="var(--gold)" style={{ margin: '0 auto 16px' }} />
+        <div style={{ fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, opacity: 0.6 }}>Initializing...</div>
+      </div>
+    </div>;
   }
 
-  if (!user) {
+  if (user === null) {
     return (
-      <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)', flexDirection: 'column'}}>
-        <style>{`
-          :root{
-            --serif: 'Cormorant Garamond', serif;
-            --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-          }
-          .app{ height:100svh; max-width:520px; margin:0 auto; position:relative; overflow:hidden; font-family:var(--sans); transition: background 1.5s ease; background: var(--bg); }
-          .app[data-theme="dark"]{
-            --bg: linear-gradient(160deg, #0d1117 0%, #131a24 40%, #0d1117 100%);
-            --text: rgba(255,255,255,0.92);
-            --gold: #c8b48c;
-            --card: rgba(255,255,255,0.06);
-          }
-          .app[data-theme="light"]{
-            --bg: linear-gradient(180deg, #f7fbff 0%, #eef7ff 40%, #f8fffd 100%);
-            --text: rgba(10,30,45,0.92);
-            --gold: #2f7bbd;
-            --card: rgba(255,255,255,0.92);
-          }
-          .loginBtn { padding: 14px 24px; background: var(--gold); border: none; border-radius: 12px; color: #fff; font-family: var(--sans); font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: transform 0.2s; }
-          .loginBtn:active { transform: scale(0.95); }
-        `}</style>
-        <Wind size={64} color="var(--gold)" style={{marginBottom: 24}} />
-        <h1 style={{fontFamily: 'var(--sans)', fontSize: 24, fontWeight: 900, marginBottom: 8}}>One Another</h1>
-        <p style={{fontFamily: 'var(--serif)', fontSize: 18, marginBottom: 32, opacity: 0.8}}>Carry each other’s burdens.</p>
-        <button className="loginBtn" onClick={handleLogin}>
-          <LogIn size={18} /> Sign in with Google
+      <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)', background: theme === 'dark' ? '#0d1117' : '#f7fbff', flexDirection: 'column', padding: 20, textAlign: 'center', height: '100svh'}}>
+        <Wind size={48} color="var(--gold)" style={{marginBottom: 24}} />
+        <h1 style={{fontSize: 24, fontWeight: 900, marginBottom: 8}}>One Another</h1>
+        <p style={{fontSize: 16, marginBottom: 32, opacity: 0.8, maxWidth: 300}}>Experiment session could not start automatically. Would you like to sign in?</p>
+        <button 
+          onClick={handleLogin}
+          style={{ padding: '14px 28px', background: 'var(--gold)', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 800, fontSize: 14, cursor: 'pointer', display:'flex', alignItems:'center', gap: 8 }}
+        >
+          <LogIn size={18} /> Sign in to start
         </button>
-        <div style={{ marginTop: 24, fontSize: 13, color: 'var(--faint)', textAlign: 'center', maxWidth: 280, lineHeight: 1.4, opacity: 0.7 }}>
-          If login loops in the preview, click the ↗️ icon in the top right to open the app in a new tab.
+        <div style={{ marginTop: 24, fontSize: 12, opacity: 0.5, maxWidth: 240 }}>
+           Tip: If sign-in pops up and closes, try opening the app in a new tab using the ↗️ icon.
         </div>
-        {notif && <div style={{ marginTop: 16, fontSize: 14, color: '#e06060', fontWeight: 'bold' }}>{notif}</div>}
       </div>
     );
   }
 
   if (membership === undefined) {
-    return <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)'}}>Loading your community...</div>;
-  }
-
-  if (!church || membership?.status !== 'active') {
-    return <JoinChurchScreen membership={membership} user={user} setNotif={triggerNotif} theme={theme} />;
+    return <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)', background: theme === 'dark' ? '#0d1117' : '#f7fbff'}}>
+      <div style={{ textAlign: 'center' }}>
+        <Wind className="animate-pulse" size={48} color="var(--gold)" style={{ margin: '0 auto 16px' }} />
+        <div style={{ fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5 }}>Preparing Community...</div>
+      </div>
+    </div>;
   }
 
   return (
@@ -395,9 +389,10 @@ export default function App() {
 
         .content{ position:absolute; inset:0; padding-top:124px; padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
         
-        .snap{ height: 100%; overflow-y: scroll; scroll-snap-type: y mandatory; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        .snap{ height: 100%; overflow-y: scroll; scroll-snap-type: y mandatory; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; user-select: none; }
+        .admin-scroll { height: 100%; overflow-y: auto; }
         
-        .screen{ height: 100%; width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 24px 20px; position: relative; overflow: hidden; }
+        .screen{ height: 100%; width: 100%; scroll-snap-align: start; scroll-snap-stop: always; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 24px 20px; position: relative; overflow: hidden; background: var(--bg); transition: background 0.3s ease; }
         
         .topRow{ position:absolute; top:15px; left:24px; right:24px; display:flex; justify-content:space-between; align-items:center; }
         .day{ font-size:10px; font-weight:900; letter-spacing:1.5px; color:var(--faint); font-family:var(--sans); text-transform: uppercase; }
@@ -480,8 +475,8 @@ export default function App() {
       <header className="header">
         <div className="titleRow">
           <div className="brandWrap">
-            <h1 className="h1">One Another</h1>
-            <div className="sub">by Koinonia</div>
+            <h1 className="h1">{church?.name || "One Another"}</h1>
+            <div className="sub">{membership?.role === 'elder' || membership?.role === 'admin' ? "Leadership Access" : "Member Community"}</div>
           </div>
           <div className="hdrBtns">
             <button className="ghostBtn" onClick={() => setShowInbox(true)} style={{ position: 'relative' }}>
@@ -503,11 +498,7 @@ export default function App() {
                 btn.innerText = "Leaving...";
                 try {
                   await deleteDoc(doc(db, "memberships", user.uid));
-                  try {
-                    window.location.reload();
-                  } catch (e) {
-                    // Ignore if blocked in iframe, just wait for onSnapshot
-                  }
+                  triggerNotif("Left the church.");
                 } catch (err: any) {
                   console.error(err);
                   btn.innerText = "Error";
@@ -540,7 +531,7 @@ export default function App() {
       {notif && <div className="notif">{notif}</div>}
 
       <main className="content">
-        <div className="snap">
+        <div className={tab === "admin" ? "admin-scroll" : "snap"}>
           {tab === "admin" ? (
              <AdminPanel prayers={prayers} currentUserId={user.uid} currentUserName={user.displayName || "Admin"} churchId={church.id} prayerStats={prayerStats} />
           ) : tab === "feed" ? (
@@ -715,21 +706,21 @@ export default function App() {
         </div>
       </main>
 
-      <button className="fab" onClick={() => openCompose("feed", "Other")}><Plus size={28} /></button>
+      <button className="fab" onClick={() => openCompose("journal", "Other")}><Plus size={28} /></button>
 
       {/* Compose Modal */}
       {compose && (
         <Modal onClose={() => { setCompose(null); setIsFork(false); }}>
           <div className="sheetHead">
             <h3 className="sheetTitle">
-              {isFork ? "Share with Your Church" : (compose === "journal" ? `Journal: ${composeCat}` : "Share a Need")}
+              {isFork ? "Share with Your Church" : "New Prayer Note"}
             </h3>
             <button className="ghostBtn" onClick={() => { setCompose(null); setIsFork(false); }}><X size={18}/></button>
           </div>
           <div className="sheetBody">
             {isFork && (
               <div className="forkNote">
-                Edit this before sharing. Your journal entry stays private.
+                Edit this before sharing. Your original journal entry stays private.
               </div>
             )}
 
@@ -752,7 +743,7 @@ export default function App() {
               autoFocus 
             />
             
-            {!currentPrompt && (
+            {(!currentPrompt || isFork) && (
               <div className="row">
                 {Object.keys(CAT).filter(c => c !== "Other").map(c => (
                   <button key={c} className={`chip ${composeCat === c ? 'on' : ''}`} onClick={() => setComposeCat(c)}>{c}</button>
@@ -760,15 +751,27 @@ export default function App() {
               </div>
             )}
             
-            {compose === "feed" && (
-              <label className="check">
-                <input type="checkbox" checked={composeAnon} onChange={() => setComposeAnon(!composeAnon)} style={{ accentColor: 'var(--gold)' }} />
-                Post anonymously
+            <div style={{ marginTop: 20, padding: 16, background: shareToFeed ? 'var(--goldSoft)' : 'var(--mutedCard)', borderRadius: 20, border: '1px solid var(--border)', transition: 'all 0.3s ease' }}>
+              <label className="check" style={{ marginBottom: shareToFeed ? 12 : 0, transition: 'all 0.2s' }}>
+                <input type="checkbox" checked={shareToFeed} onChange={() => setShareToFeed(!shareToFeed)} style={{ width: 18, height: 18, accentColor: 'var(--gold)' }} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--text)', fontSize: 14 }}>Share with Church Community</span>
+                  <span style={{ fontSize: 11, color: 'var(--dim)' }}>Let others in the feed pray over this need.</span>
+                </div>
               </label>
-            )}
+
+              {shareToFeed && (
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 12, animation: 'fadeIn 0.3s ease' }}>
+                  <label className="check" style={{ marginBottom: 0 }}>
+                    <input type="checkbox" checked={composeAnon} onChange={() => setComposeAnon(!composeAnon)} style={{ accentColor: 'var(--gold)' }} />
+                    <span style={{ fontSize: 13, color: 'var(--dim)' }}>Post anonymously</span>
+                  </label>
+                </div>
+              )}
+            </div>
             
-            <button className="primary" disabled={!composeText.trim()} onClick={submitCompose}>
-              {compose === "journal" ? "Save to Journal" : "Share"}
+            <button className="primary" style={{ marginTop: 24 }} disabled={!composeText.trim()} onClick={submitCompose}>
+              {isFork ? "Share Request" : (shareToFeed ? "Save & Share" : "Save to Journal")}
             </button>
           </div>
         </Modal>
@@ -900,7 +903,25 @@ export default function App() {
                )}
             </div>
 
-            <button className="primary" style={{ marginTop: 24 }} onClick={() => setDash(false)}>Close</button>
+            <button 
+              className="ghostBtn" 
+              style={{ marginTop: 24, width: '100%', justifyContent: 'center', padding: 12, color: '#e06060', background: 'transparent', borderColor: 'rgba(224, 96, 96, 0.2)' }}
+              onClick={(e) => {
+                const btn = e.currentTarget;
+                if (btn.innerText === "Reset My Life Data") {
+                  btn.innerText = "Are you sure? (Clears Journal/Logs)";
+                  setTimeout(() => { if (btn) btn.innerText = "Reset My Life Data"; }, 3000);
+                  return;
+                }
+                wipeAllLocalData();
+                triggerNotif("Personal life data cleared.");
+                btn.innerText = "Reset My Life Data";
+              }}
+            >
+              Reset My Life Data
+            </button>
+
+            <button className="primary" style={{ marginTop: 12 }} onClick={() => setDash(false)}>Close</button>
           </div>
         </Modal>
       )}

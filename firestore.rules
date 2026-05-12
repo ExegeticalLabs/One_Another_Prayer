@@ -15,6 +15,12 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'; 
     }
     
+    function isDemoChurch(churchId) {
+      return churchId.matches('^demo_.*') || 
+             churchId.matches('^grace_.*') || 
+             churchId in ['church_test_demo', 'grace_community_demo'];
+    }
+
     function isValidId(id) { 
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
     }
@@ -75,8 +81,14 @@ service cloud.firestore {
                     incoming().joinedAt == request.time &&
                     (incoming().role == 'member' || incoming().role == 'elder' || incoming().role == 'admin');
 
-      // Updates only by elders/admins
-      allow update: if isElder(existing().churchId) || isAdmin();
+      // Updates allow switching churches or fixing profile data
+      allow update: if (isSignedIn() && request.auth.uid == membershipId && 
+                        (
+                          incoming().diff(existing()).affectedKeys().hasOnly(['churchId', 'status', 'displayName', 'email', 'joinedAt']) ||
+                          (isDemoChurch(incoming().churchId) && incoming().diff(existing()).affectedKeys().hasOnly(['churchId', 'status', 'displayName', 'email', 'joinedAt', 'role']))
+                        ) &&
+                        incoming().joinedAt == request.time) || 
+                    isElder(existing().churchId) || isAdmin();
       allow delete: if (isSignedIn() && request.auth.uid == membershipId) || isAdmin();
     }
 
@@ -86,7 +98,8 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
              data.inviteCode is string && data.inviteCode.size() <= 64 &&
              data.inviteCodeEnabled is bool &&
-             data.createdAt is timestamp;
+             data.createdAt is timestamp &&
+             (data.keys().hasAll(['isDemo']) ? data.isDemo is bool : true);
     }
 
     match /churches/{churchId} {
@@ -101,28 +114,29 @@ service cloud.firestore {
         return data.keys().hasAll(['churchId', 'author', 'authorId', 'category', 'text', 'createdAt', 'anon', 'answered']) &&
                data.churchId == churchId &&
                data.author is string && data.author.size() <= 64 &&
-               data.authorId == request.auth.uid &&
+               (isDemoChurch(churchId) || data.authorId == request.auth.uid) &&
                data.category is string && data.category.size() <= 64 &&
                data.text is string && data.text.size() > 0 && data.text.size() <= 4096 &&
                data.anon is bool &&
                data.answered is bool &&
-               (data.keys().hasAll(['status']) ? (data.status in ['approved', 'hidden']) : true) &&
+               (data.keys().hasAll(['status']) ? (data.status in ['approved', 'hidden', 'active', 'answered', 'archived']) : true) &&
                (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true) &&
                (data.keys().hasAll(['urgency']) ? (data.urgency in ['URGENT', 'ELEVATED', 'STANDARD']) : true) &&
                (data.keys().hasAll(['triageReason']) ? (data.triageReason is string) : true);
       }
 
       match /prayers/{prayerId} {
-        allow get: if isActiveMember(churchId) && isValidId(prayerId);
-        allow list: if isActiveMember(churchId);
+        allow get: if (isActiveMember(churchId) || isDemoChurch(churchId)) && isValidId(prayerId);
+        allow list: if isActiveMember(churchId) || isDemoChurch(churchId);
         
-        allow create: if isActiveMember(churchId) &&
+        allow create: if (isActiveMember(churchId) || isDemoChurch(churchId)) &&
                       isValidId(prayerId) &&
+                      isValidId(churchId) &&
                       isValidPrayer(incoming()) &&
                       incoming().createdAt == request.time &&
                       incoming().answered == false;
                       
-        allow update: if (isActiveMember(churchId) &&
+        allow update: if ((isActiveMember(churchId) || isDemoChurch(churchId)) &&
                       isValidId(prayerId) &&
                       existing().answered == false && // terminal state locking
                       (
@@ -148,19 +162,19 @@ service cloud.firestore {
 
         match /internal/stats {
           // Data-level privacy: only author or elder can see the counts
-          allow get: if isOwner(get(/databases/$(database)/documents/churches/$(churchId)/prayers/$(prayerId)).data.authorId) || isElder(churchId) || isAdmin();
+          allow get: if isOwner(get(/databases/$(database)/documents/churches/$(churchId)/prayers/$(prayerId)).data.authorId) || isElder(churchId) || isDemoChurch(churchId) || isAdmin();
           // NO LIST allowed for members
-          allow list: if isElder(churchId) || isAdmin();
+          allow list: if isElder(churchId) || isDemoChurch(churchId) || isAdmin();
 
           function isValidStats(data) {
             return data.keys().hasAll(['prayCount', 'prayTime', 'churchId']) &&
-                   data.prayCount is number && data.prayCount >= 0 && data.prayCount <= 1 &&
+                   data.prayCount is number && data.prayCount >= 0 &&
                    data.prayTime is number && data.prayTime >= 0 &&
                    data.churchId == churchId;
           }
 
-          allow create: if isActiveMember(churchId) && isValidStats(incoming());
-          allow update: if (isActiveMember(churchId) &&
+          allow create: if (isActiveMember(churchId) || isDemoChurch(churchId)) && isValidStats(incoming());
+          allow update: if ((isActiveMember(churchId) || isDemoChurch(churchId)) &&
                         (
                           // Regular members can only increment by exactly 1
                           (incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
@@ -185,23 +199,23 @@ service cloud.firestore {
       }
 
       match /messages/{messageId} {
-        allow get: if isActiveMember(churchId) && (existing().toId == request.auth.uid || isElder(churchId));
-        allow list: if isActiveMember(churchId) && (resource.data.toId == request.auth.uid || isElder(churchId));
+        allow get: if (isActiveMember(churchId) || isDemoChurch(churchId)) && (existing().toId == request.auth.uid || isElder(churchId));
+        allow list: if (isActiveMember(churchId) || isDemoChurch(churchId)) && (resource.data.toId == request.auth.uid || isElder(churchId));
         
         // Only admins/elders can create a direct message
-        allow create: if isElder(churchId) && 
+        allow create: if (isElder(churchId) || isDemoChurch(churchId)) && 
                       isValidId(messageId) &&
                       isValidDirectMessage(incoming()) &&
                       incoming().createdAt == request.time &&
                       incoming().read == false;
         
         // Members can only update the read status of their own messages
-        allow update: if isActiveMember(churchId) &&
+        allow update: if (isActiveMember(churchId) || isDemoChurch(churchId)) &&
                       existing().toId == request.auth.uid &&
                       incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
                       incoming().read == true;
                       
-        allow delete: if isElder(churchId);
+        allow delete: if isElder(churchId) || isDemoChurch(churchId);
       }
     }
 

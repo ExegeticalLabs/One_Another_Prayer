@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, signInAnonymously, User } from 'firebase/auth';
 import { collection, doc, getDoc, setDoc, onSnapshot, query, orderBy, serverTimestamp, where } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 
@@ -24,35 +24,43 @@ export function useAppData() {
   // Bookmarks kept locally
   const [bookmarks, setBookmarks] = useState<string[]>([]);
 
-  // Auth Listener
+  // Auth Listener + Auto Login
   useEffect(() => {
+    let setupStarted = false;
     const unsub = onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        if (setupStarted) return;
+        setupStarted = true;
+        // Auto-login anonymously for a seamless "just works" experience
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.error("Auto-login failed. Anonymous auth might be disabled in Firebase console:", e);
+          setAuthReady(true);
+        }
+        return;
+      }
+
       setUser(u);
       
-      if (u) {
-        try {
-          const uDocRef = doc(db, 'users', u.uid);
-          const uDocSnap = await getDoc(uDocRef);
-          
-          if (!uDocSnap.exists()) {
-            const newProfile = {
-              email: u.email || '',
-              displayName: u.displayName || 'Unknown',
-              role: 'member',
-              createdAt: serverTimestamp()
-            };
-            await setDoc(uDocRef, newProfile);
-            setUserProfile(newProfile);
-          } else {
-            setUserProfile(uDocSnap.data());
-          }
-        } catch(e) {
-          console.error("Error fetching user profile:", e);
+      try {
+        const uDocRef = doc(db, 'users', u.uid);
+        const uDocSnap = await getDoc(uDocRef);
+        
+        if (!uDocSnap.exists()) {
+          const newProfile = {
+            email: u.email || 'guest@example.com',
+            displayName: u.displayName || (u.isAnonymous ? 'Guest User' : 'Community Member'),
+            role: 'member',
+            createdAt: serverTimestamp()
+          };
+          await setDoc(uDocRef, newProfile);
+          setUserProfile(newProfile);
+        } else {
+          setUserProfile(uDocSnap.data());
         }
-      } else {
-        setUserProfile(null);
-        setMembership(null);
-        setChurch(null);
+      } catch(e) {
+        console.error("Error fetching user profile:", e);
       }
       
       setAuthReady(true);
@@ -60,7 +68,7 @@ export function useAppData() {
     return () => unsub();
   }, []);
 
-  // Membership & Church listener
+  // Membership & Church listener + Auto Setup
   useEffect(() => {
     if (!user) return;
     
@@ -70,10 +78,7 @@ export function useAppData() {
     const unsubMem = onSnapshot(doc(db, 'memberships', user.uid), async (snap) => {
       if (snap.exists()) {
         const memData = snap.data();
-        if (snap.metadata.hasPendingWrites && !memData.joinedAt) {
-          // Local creation uses serverTimestamp which is initially null. Wait for server confirmation to avoid permission-denied race conditions
-          return;
-        }
+        if (snap.metadata.hasPendingWrites && !memData.joinedAt) return;
         setMembership(memData);
         
         // Listen to church
@@ -85,8 +90,40 @@ export function useAppData() {
            }
         }, (err) => console.error(err));
       } else {
-        setMembership(null);
-        setChurch(null);
+        // AUTO-SETUP: If no membership, automatically create a default church and join as Admin
+        // This removes the "Join Church" hurdle for experimentation.
+        try {
+          const defaultChurchId = "main_community";
+          const churchRef = doc(db, "churches", defaultChurchId);
+          const churchSnap = await getDoc(churchRef);
+
+          if (!churchSnap.exists()) {
+            await setDoc(churchRef, {
+              name: "One Another Community",
+              inviteCode: "EXPERIMENT",
+              inviteCodeEnabled: true,
+              createdAt: serverTimestamp()
+            });
+          }
+
+          // Create membership as Admin/Elder so user has full controls
+          const myMembership = {
+            userId: user.uid,
+            churchId: defaultChurchId,
+            displayName: userProfile?.displayName || user.displayName || "Experimenter",
+            email: userProfile?.email || user.email || "guest@experiment.com",
+            role: "admin",
+            status: "active",
+            joinedAt: serverTimestamp()
+          };
+          
+          await setDoc(doc(db, "memberships", user.uid), myMembership);
+          setMembership(myMembership);
+        } catch (e) {
+          console.error("Auto-setup failed:", e);
+          setMembership(null);
+          setChurch(null);
+        }
       }
     }, (error) => {
       console.error("Membership error:", error);
@@ -117,10 +154,11 @@ export function useAppData() {
 
   // Firestore Listeners
   useEffect(() => {
-    if (!user || !church || membership?.status !== 'active') {
+    const canFetch = user && church && membership?.status === 'active';
+
+    if (!canFetch) {
       setPrayers([]);
       setChurchLogs([]);
-      setBookmarks([]);
       setMessages([]);
       return;
     }
@@ -221,10 +259,20 @@ export function useAppData() {
     return !isBookmarked;
   };
 
+  const wipeAllLocalData = () => {
+    if (!user) return;
+    localStorage.removeItem(`pf_journal_${user.uid}`);
+    localStorage.removeItem(`pf_logs_${user.uid}`);
+    localStorage.removeItem(`pf_bookmarks_${user.uid}`);
+    setJournal([]);
+    setPersonalLogs([]);
+    setBookmarks([]);
+  };
+
   const prayerLogs = [...churchLogs, ...personalLogs];
 
   return { 
     user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, prayerStats,
-    addJournalEntry, addPersonalLog, toggleLocalBookmark
+    addJournalEntry, addPersonalLog, toggleLocalBookmark, wipeAllLocalData
   };
 }
