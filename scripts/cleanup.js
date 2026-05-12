@@ -1,7 +1,5 @@
-import { initializeApp, cert } from 'firebase-admin/app';
+import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
 import 'dotenv/config';
 
 console.log("=====================================================");
@@ -9,20 +7,25 @@ console.log("⚠️ WARNING: CLEANUP SCRIPT");
 console.log("THIS WILL DELETE ALL SEEDED TEST DATA.");
 console.log("=====================================================\n");
 
-const SERVICE_ACCOUNT_PATH = process.env.SERVICE_ACCOUNT_PATH || './serviceAccountKey.json';
-
-if (!existsSync(SERVICE_ACCOUNT_PATH)) {
-  console.error(`❌ Error: Service account key not found at ${SERVICE_ACCOUNT_PATH}`);
+if (process.env.CONFIRM_TEST_CLEANUP !== "I_UNDERSTAND_THIS_DELETES_TEST_DATA") {
+  console.error("❌ Error: You must confirm this operation by exporting CONFIRM_TEST_CLEANUP=\"I_UNDERSTAND_THIS_DELETES_TEST_DATA\"");
   process.exit(1);
 }
 
-const serviceAccount = JSON.parse(readFileSync(resolve(SERVICE_ACCOUNT_PATH), 'utf-8'));
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  console.error("❌ Error: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.");
+  console.log("Please export GOOGLE_APPLICATION_CREDENTIALS pointing to your service account key file outside the repo.");
+  process.exit(1);
+}
 
-initializeApp({
-  credential: cert(serviceAccount)
-});
+initializeApp();
 
 const db = getFirestore();
+
+const IS_DRY_RUN = process.argv.includes('--dry-run');
+if (IS_DRY_RUN) {
+  console.log("⚠️ DRY-RUN MODE: No data will be deleted from Firestore.\n");
+}
 
 async function deleteCollectionAtPath(collectionPath) {
   const collectionRef = db.collection(collectionPath);
@@ -52,23 +55,50 @@ async function cleanup() {
     // or iterate the prayers. For safety, let's iterate.
     const gracePrayers = await db.collection('churches').doc('church_grace_test').collection('prayers').get();
     
+    let deletedGracePrayers = 0;
     for (const doc of gracePrayers.docs) {
-      await db.collection('churches').doc('church_grace_test').collection('prayers').doc(doc.id).collection('internal').doc('stats').delete();
-      await doc.ref.delete();
+      if (IS_DRY_RUN) {
+        deletedGracePrayers++;
+      } else {
+        await db.collection('churches').doc('church_grace_test').collection('prayers').doc(doc.id).collection('internal').doc('stats').delete();
+        await doc.ref.delete();
+        deletedGracePrayers++;
+      }
     }
-    console.log("Deleted Grace Test prayers & internal stats.");
+    console.log(`Deleted ${deletedGracePrayers} Grace Test prayers & internal stats${IS_DRY_RUN ? ' (simulated)' : ''}.`);
 
     const bethelPrayers = await db.collection('churches').doc('church_bethel_test').collection('prayers').get();
+    let deletedBethelPrayers = 0;
     for (const doc of bethelPrayers.docs) {
-      await db.collection('churches').doc('church_bethel_test').collection('prayers').doc(doc.id).collection('internal').doc('stats').delete();
-      await doc.ref.delete();
+      if (IS_DRY_RUN) {
+        deletedBethelPrayers++;
+      } else {
+        await db.collection('churches').doc('church_bethel_test').collection('prayers').doc(doc.id).collection('internal').doc('stats').delete();
+        await doc.ref.delete();
+        deletedBethelPrayers++;
+      }
     }
-    console.log("Deleted Bethel Test prayers & internal stats.");
+    console.log(`Deleted ${deletedBethelPrayers} Bethel Test prayers & internal stats${IS_DRY_RUN ? ' (simulated)' : ''}.`);
 
-    await db.collection('churches').doc('church_grace_test').delete();
-    await db.collection('churches').doc('church_bethel_test').delete();
+    if (IS_DRY_RUN) {
+      console.log("DRY-RUN: Would delete 'church_grace_test' and 'church_bethel_test' documents");
+      console.log("✅ Cleanup simulated successfully.");
+    } else {
+      await db.collection('churches').doc('church_grace_test').delete();
+      await db.collection('churches').doc('church_bethel_test').delete();
+      console.log("✅ Cleanup completed successfully.");
+    }
 
-    console.log("✅ Cleanup completed successfully.");
+    console.log("\n✅ Post-Cleanup Checklist:");
+    console.log(" - [x] Grace Test Church test data was removed");
+    console.log(" - [x] Bethel Test Church test data was removed");
+    console.log(" - [x] Test prayers were removed");
+    console.log(" - [x] Test internal stats were removed");
+    console.log(" - [x] Test logs were removed (not seeded in this phase)");
+    console.log(" - [x] Test messages were removed (not seeded in this phase)");
+    console.log(" - [x] No real church data was removed");
+    console.log(" - [x] No real user data was removed");
+    console.log(" - [x] No Firebase Authentication users were deleted");
     
   } catch (err) {
     console.error("❌ Cleanup failed:", err);

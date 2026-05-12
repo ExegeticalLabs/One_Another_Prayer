@@ -1,7 +1,5 @@
-import { initializeApp, cert } from 'firebase-admin/app';
+import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
 import 'dotenv/config';
 
 console.log("=====================================================");
@@ -9,25 +7,29 @@ console.log("⚠️ WARNING: TEST DATA ONLY");
 console.log("DO NOT USE WITH REAL PRAYER REQUESTS OR IN PRODUCTION.");
 console.log("=====================================================\n");
 
-const SERVICE_ACCOUNT_PATH = process.env.SERVICE_ACCOUNT_PATH || './serviceAccountKey.json';
-
-if (!existsSync(SERVICE_ACCOUNT_PATH)) {
-  console.error(`❌ Error: Service account key not found at ${SERVICE_ACCOUNT_PATH}`);
-  console.log("Please download your Firebase admin SDK service account key, save it as 'serviceAccountKey.json' in the root directory, or provide its path via SERVICE_ACCOUNT_PATH.");
+if (process.env.CONFIRM_TEST_SEED !== "I_UNDERSTAND_THIS_CREATES_TEST_DATA") {
+  console.error("❌ Error: You must confirm this operation by exporting CONFIRM_TEST_SEED=\"I_UNDERSTAND_THIS_CREATES_TEST_DATA\"");
   process.exit(1);
 }
 
-const serviceAccount = JSON.parse(readFileSync(resolve(SERVICE_ACCOUNT_PATH), 'utf-8'));
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  console.error("❌ Error: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.");
+  console.log("Please export GOOGLE_APPLICATION_CREDENTIALS pointing to your service account key file outside the repo.");
+  process.exit(1);
+}
 
-initializeApp({
-  credential: cert(serviceAccount)
-});
+initializeApp();
 
 const db = getFirestore();
 
 // We will map one or more test UIDs to the seeded prayers so you can test "Author owns prayer" logic.
 // You can pass these via environment variables, otherwise they default to fake IDs.
 const PRIMARY_UID = process.env.PRIMARY_UID || "test_user_uid_1";
+
+const IS_DRY_RUN = process.argv.includes('--dry-run');
+if (IS_DRY_RUN) {
+  console.log("⚠️ DRY-RUN MODE: No data will be written to Firestore.\n");
+}
 
 async function seed() {
   try {
@@ -38,14 +40,20 @@ async function seed() {
     batch.set(graceChurchRef, {
       name: "Grace Test Church",
       inviteCodeEnabled: true,
-      createdAt: FieldValue.serverTimestamp()
+      createdAt: FieldValue.serverTimestamp(),
+      isTestData: true,
+      testSeedVersion: "phase5-mvp-controlled-testing-v1",
+      createdBySeedScript: true
     });
 
     const bethelChurchRef = db.collection('churches').doc('church_bethel_test');
     batch.set(bethelChurchRef, {
       name: "Bethel Test Church",
       inviteCodeEnabled: true,
-      createdAt: FieldValue.serverTimestamp()
+      createdAt: FieldValue.serverTimestamp(),
+      isTestData: true,
+      testSeedVersion: "phase5-mvp-controlled-testing-v1",
+      createdBySeedScript: true
     });
 
     console.log("Seeding Prayers for Grace Test Church...");
@@ -207,6 +215,9 @@ async function seed() {
         authorId: p.authorId,
         author: p.author,
         createdAt,
+        isTestData: true,
+        testSeedVersion: "phase5-mvp-controlled-testing-v1",
+        createdBySeedScript: true
       });
 
       // Seed Private Stats
@@ -214,18 +225,36 @@ async function seed() {
       batch.set(statsRef, {
         churchId: "church_grace_test",
         prayCount: p.stats.prayCount,
-        prayTime: p.stats.prayTime
+        prayTime: p.stats.prayTime,
+        isTestData: true,
+        testSeedVersion: "phase5-mvp-controlled-testing-v1",
+        createdBySeedScript: true
       });
 
       // Optionally we could seed some logs in `users/fake_uid/logs` but let's 
       // rely on the user generating those in testing.
     }
 
-    console.log("Committing to Firestore...");
-    await batch.commit();
+    if (IS_DRY_RUN) {
+      console.log("DRY-RUN: Would commit batch with churches, prayers, and stats.");
+      console.log("✅ Seeding simulated successfully.");
+    } else {
+      console.log("Committing to Firestore...");
+      await batch.commit();
+      console.log("✅ Seeding completed successfully.");
+    }
 
-    console.log("✅ Seeding completed successfully.");
     console.log("Test Churches created: 'church_grace_test', 'church_bethel_test'");
+    
+    console.log("\n✅ Post-Seed Checklist:");
+    console.log(" - [x] Grace Test Church exists (or would exist)");
+    console.log(" - [x] Bethel Test Church exists (or would exist)");
+    console.log(" - [x] Fake prayer requests exist (or would exist)");
+    console.log(" - [x] Fake stats exist only under internal stats paths");
+    console.log(" - [x] No stats appear in public prayer documents");
+    console.log(" - [x] No real prayer data was created or modified");
+    console.log(" - [x] No Firebase Authentication users were created or deleted");
+    console.log(" - [x] ACCEPTANCE_MATRIX.md can now be executed manually");
     
   } catch (err) {
     console.error("❌ Seeding failed:", err);

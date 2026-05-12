@@ -13,8 +13,7 @@ These scripts use standard `firebase-admin` tools to bypass client security rule
    - Click the gear icon > **Project settings**.
    - Go to the **Service accounts** tab.
    - Click **Generate new private key**.
-   - Save the downloaded JSON file as `serviceAccountKey.json` in the root of your project folder.
-   *(This file is already in `.gitignore` and won't be committed.)*
+   - Save the downloaded JSON file to a secure location **OUTSIDE of this repository** (e.g. `~/.keys/serviceAccountKey.json`).
 
 2. Run `npm install` to ensure `firebase-admin` and `dotenv` are installed.
 
@@ -22,13 +21,11 @@ These scripts use standard `firebase-admin` tools to bypass client security rule
 
 Before running the script, log into your application using your real Google account to create a Firebase Auth UID. Copy your UID (you can find it in the Authentication tab in Firebase Console).
 
-Export your UID so the seed script attributes some prayers to you for testing "Author owns prayer" logic:
+Export your UID, point to your service account key, and confirm your intent so the seed script attributes some prayers to you for testing "Author owns prayer" logic:
 ```bash
+export GOOGLE_APPLICATION_CREDENTIALS="/absolute/path/outside/the/repo/serviceAccountKey.json"
 export PRIMARY_UID="your-firebase-auth-uid"
-```
-
-Run the seed script:
-```bash
+export CONFIRM_TEST_SEED="I_UNDERSTAND_THIS_CREATES_TEST_DATA"
 node scripts/seed.js
 ```
 
@@ -83,6 +80,8 @@ Change `churchId` to `"church_bethel_test"`.
 Once testing is fully completed and signed off, use the cleanup script to remove all the seeded fake data.
 
 ```bash
+export GOOGLE_APPLICATION_CREDENTIALS="/absolute/path/outside/the/repo/serviceAccountKey.json"
+export CONFIRM_TEST_CLEANUP="I_UNDERSTAND_THIS_DELETES_TEST_DATA"
 node scripts/cleanup.js
 ```
 
