@@ -1,0 +1,74 @@
+{
+  "entities": {
+    "Prayer": {
+      "title": "Prayer",
+      "description": "A prayer request submitted for the church.",
+      "type": "object",
+      "properties": {
+        "author": { "type": "string", "description": "Display name of the author or 'A Church Member'." },
+        "authorId": { "type": "string", "description": "UID of the author." },
+        "category": { "type": "string", "description": "Category of the prayer." },
+        "text": { "type": "string", "description": "The prayer content." },
+        "createdAt": { "type": "number", "description": "Server timestamp of creation." },
+        "anon": { "type": "boolean", "description": "Whether it is anonymous." },
+        "answered": { "type": "boolean", "description": "Whether the prayer has been answered." },
+        "answerNote": { "type": "string", "description": "Optional note when answered." }
+      },
+      "required": ["author", "authorId", "category", "text", "createdAt", "anon", "answered"]
+    },
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "A private journal reflection.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "category": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "category", "text", "createdAt"]
+    },
+    "PrayerLog": {
+      "title": "PrayerLog",
+      "description": "Tracks time spent praying.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "prayerId": { "type": "string" },
+        "type": { "type": "string", "enum": ["church", "personal"] },
+        "durationSec": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "prayerId", "type", "durationSec", "createdAt"]
+    },
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "A user's bookmark to a specific prayer.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "prayerId": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "prayerId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/prayers/{prayerId}": {
+      "schema": { "$ref": "#/entities/Prayer" },
+      "description": "Global prayer requests shared with everyone."
+    },
+    "/users/{userId}/journal/{journalId}": {
+      "schema": { "$ref": "#/entities/JournalEntry" },
+      "description": "Private journal entries."
+    },
+    "/users/{userId}/logs/{logId}": {
+      "schema": { "$ref": "#/entities/PrayerLog" },
+      "description": "Private prayer connection logs."
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": { "$ref": "#/entities/Bookmark" },
+      "description": "Private bookmarks."
+    }
+  }
+}

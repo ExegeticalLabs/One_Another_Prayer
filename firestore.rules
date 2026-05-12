@@ -1,0 +1,118 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    
+    function isValidId(id) { 
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    function isValidPrayer(data) {
+      return data.keys().hasAll(['author', 'authorId', 'category', 'text', 'createdAt', 'anon', 'answered']) &&
+             data.keys().size() in [7, 8] &&
+             data.author is string && data.author.size() <= 64 &&
+             data.authorId == request.auth.uid &&
+             data.category is string && data.category.size() <= 64 &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 4096 &&
+             data.anon is bool &&
+             data.answered is bool &&
+             (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true);
+    }
+
+    match /prayers/{prayerId} {
+      allow get: if isSignedIn() && isValidId(prayerId);
+      allow list: if isSignedIn(); // All signed in users can list public prayers
+      
+      allow create: if isSignedIn() &&
+                    isValidId(prayerId) &&
+                    isValidPrayer(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().answered == false;
+                    
+      allow update: if isSignedIn() &&
+                    isValidId(prayerId) &&
+                    existing().authorId == request.auth.uid &&
+                    existing().answered == false && // terminal state locking
+                    isValidPrayer(incoming()) &&
+                    incoming().authorId == existing().authorId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['answered', 'answerNote', 'text', 'category']) &&
+                    (incoming().answered == true || incoming().answered == false);
+                    
+      allow delete: if isSignedIn() && isValidId(prayerId) && existing().authorId == request.auth.uid;
+    }
+
+    function isValidJournalEntry(data) {
+      return data.keys().hasAll(['userId', 'category', 'text', 'createdAt']) &&
+             data.keys().size() == 4 &&
+             data.userId == request.auth.uid &&
+             data.category is string && data.category.size() <= 64 &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 4096;
+    }
+
+    function isValidPrayerLog(data) {
+      return data.keys().hasAll(['userId', 'prayerId', 'type', 'durationSec', 'createdAt']) &&
+             data.keys().size() == 5 &&
+             data.userId == request.auth.uid &&
+             data.prayerId is string && data.prayerId.size() <= 128 &&
+             data.type is string && (data.type == 'church' || data.type == 'personal') &&
+             data.durationSec is number && data.durationSec >= 0 && data.durationSec <= 36000;
+    }
+
+    function isValidBookmark(data) {
+      return data.keys().hasAll(['userId', 'prayerId', 'createdAt']) &&
+             data.keys().size() == 3 &&
+             data.userId == request.auth.uid &&
+             data.prayerId is string && data.prayerId.size() <= 128;
+    }
+
+    match /users/{userId}/journal/{journalId} {
+      allow get: if isOwner(userId) && isValidId(journalId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                    isValidId(journalId) && 
+                    isValidJournalEntry(incoming()) &&
+                    incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && 
+                    isValidId(journalId) && 
+                    isValidJournalEntry(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['text', 'category']);
+      allow delete: if isOwner(userId) && isValidId(journalId);
+    }
+    
+    match /users/{userId}/logs/{logId} {
+      allow get: if isOwner(userId) && isValidId(logId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                    isValidId(logId) && 
+                    isValidPrayerLog(incoming()) &&
+                    incoming().createdAt == request.time;
+      // Logs are immutable
+      allow update: if false;
+      allow delete: if isOwner(userId) && isValidId(logId);
+    }
+
+    match /users/{userId}/bookmarks/{bookmarkId} {
+      allow get: if isOwner(userId) && isValidId(bookmarkId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                    isValidId(bookmarkId) && 
+                    isValidBookmark(incoming()) &&
+                    incoming().createdAt == request.time;
+      // Bookmarks are immutable records
+      allow update: if false;
+      allow delete: if isOwner(userId) && isValidId(bookmarkId);
+    }
+  }
+}
