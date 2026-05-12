@@ -14,9 +14,27 @@
         "answered": { "type": "boolean", "description": "Whether the prayer has been answered." },
         "answerNote": { "type": "string", "description": "Optional note when answered." },
         "prayCount": { "type": "number", "description": "Global count of people who prayed." },
-        "prayTime": { "type": "number", "description": "Global time spent praying." }
+        "prayTime": { "type": "number", "description": "Global time spent praying." },
+        "urgency": { "type": "string", "enum": ["URGENT", "ELEVATED", "STANDARD"], "description": "AI triage level." },
+        "triageReason": { "type": "string", "description": "AI reason for urgency level." },
+        "status": { "type": "string", "enum": ["approved", "hidden"], "description": "Moderation status." }
       },
       "required": ["author", "authorId", "category", "text", "createdAt", "anon", "answered"]
+    },
+    "DirectMessage": {
+      "title": "DirectMessage",
+      "description": "Elder pastoral direct message.",
+      "type": "object",
+      "properties": {
+        "fromId": { "type": "string" },
+        "fromName": { "type": "string" },
+        "toId": { "type": "string" },
+        "prayerId": { "type": "string", "description": "Context about which prayer." },
+        "text": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["fromId", "fromName", "toId", "text", "createdAt", "read"]
     },
     "PrayerLog": {
       "title": "PrayerLog",
@@ -71,6 +89,10 @@
     "/users/{userId}/bookmarks/{bookmarkId}": {
       "schema": { "$ref": "#/entities/Bookmark" },
       "description": "Private bookmarks."
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/DirectMessage" },
+      "description": "Direct pastoral messages between elders and members."
     }
   }
 }

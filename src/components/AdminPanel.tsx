@@ -1,13 +1,21 @@
 import React, { useState, useEffect } from "react";
-import { User, Shield, Trash2, Eye, EyeOff } from "lucide-react";
-import { collection, onSnapshot, doc, getDocs, updateDoc, deleteDoc } from "firebase/firestore";
+import { User, Shield, Trash2, Eye, EyeOff, AlertTriangle, MessageCircle, Send } from "lucide-react";
+import { collection, onSnapshot, doc, getDocs, updateDoc, deleteDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { CategoryPill } from "./CategoryPill";
 import { formatTimeAgo } from "../lib/utils";
 
-export function AdminPanel({ prayers, currentUserId }: { prayers: any[], currentUserId: string }) {
+const URGENCY_STYLES: Record<string, any> = {
+  URGENT: { background: '#e06060', color: '#fff' },
+  ELEVATED: { background: '#f59e0b', color: '#fff' },
+  STANDARD: { background: 'var(--border)', color: 'var(--dim)' }
+};
+
+export function AdminPanel({ prayers, currentUserId, currentUserName }: { prayers: any[], currentUserId: string, currentUserName?: string }) {
   const [activeTab, setActiveTab] = useState("prayers");
   const [users, setUsers] = useState<any[]>([]);
+  const [dmTarget, setDmTarget] = useState<any>(null);
+  const [dmText, setDmText] = useState("");
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -28,6 +36,36 @@ export function AdminPanel({ prayers, currentUserId }: { prayers: any[], current
       await deleteDoc(doc(db, 'prayers', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'prayers');
+    }
+  };
+
+  const toggleHide = async (id: string, currentStatus: string) => {
+    try {
+      await updateDoc(doc(db, 'prayers', id), {
+        status: currentStatus === 'hidden' ? 'approved' : 'hidden'
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'prayers');
+    }
+  };
+
+  const sendDM = async () => {
+    if (!dmText.trim() || !dmTarget) return;
+    try {
+      await addDoc(collection(db, 'messages'), {
+        fromId: currentUserId,
+        fromName: currentUserName || "An Elder",
+        toId: dmTarget.authorId,
+        prayerId: dmTarget.id,
+        text: dmText.trim(),
+        createdAt: serverTimestamp(),
+        read: false
+      });
+      setDmTarget(null);
+      setDmText("");
+      alert("Pastoral message sent.");
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, 'messages');
     }
   };
 
@@ -71,13 +109,48 @@ export function AdminPanel({ prayers, currentUserId }: { prayers: any[], current
             prayers.map(p => (
               <div key={p.id} style={{ padding: 16, borderRadius: 16, background: 'var(--mutedCard)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <CategoryPill category={p.category} />
-                  <button onClick={() => handleDelete(p.id)} style={{ background: 'none', border: 'none', color: '#e06060', cursor: 'pointer', padding: 4 }}>
-                    <Trash2 size={16} />
-                  </button>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <CategoryPill category={p.category} />
+                    {p.urgency && (
+                      <span style={{ 
+                        ...URGENCY_STYLES[p.urgency], 
+                        padding: '4px 8px', 
+                        borderRadius: 6, 
+                        fontSize: 10, 
+                        fontWeight: 900, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 4,
+                        textTransform: 'uppercase'
+                      }}>
+                        {p.urgency === 'URGENT' && <AlertTriangle size={10} />}
+                        {p.urgency}
+                      </span>
+                    )}
+                    {p.status === 'hidden' && (
+                      <span style={{ background: '#333', color: '#fff', padding: '4px 8px', borderRadius: 6, fontSize: 10, fontWeight: 900, textTransform: 'uppercase' }}>Hidden</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button onClick={() => setDmTarget(p)} style={{ background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', padding: 4 }}>
+                      <MessageCircle size={16} />
+                    </button>
+                    <button onClick={() => toggleHide(p.id, p.status || 'approved')} style={{ background: 'none', border: 'none', color: 'var(--dim)', cursor: 'pointer', padding: 4 }}>
+                       {p.status === 'hidden' ? <Eye size={16} /> : <EyeOff size={16} />}
+                    </button>
+                    <button onClick={() => handleDelete(p.id)} style={{ background: 'none', border: 'none', color: '#e06060', cursor: 'pointer', padding: 4 }}>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
                 
                 <p style={{ margin: 0, fontFamily: 'var(--serif)', fontSize: 16, color: 'var(--text)', lineHeight: 1.4 }}>{p.text}</p>
+                
+                {p.triageReason && (
+                   <div style={{ fontSize: 12, color: 'var(--dim)', fontStyle: 'italic', paddingLeft: 8, borderLeft: '2px solid var(--border)' }}>
+                     "AI: {p.triageReason}"
+                   </div>
+                )}
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8, padding: 12, background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -130,6 +203,25 @@ export function AdminPanel({ prayers, currentUserId }: { prayers: any[], current
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {dmTarget && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 24, width: '100%', maxWidth: 400 }}>
+             <h3 style={{ margin: '0 0 16px 0', color: 'var(--text)', fontFamily: 'var(--sans)', fontSize: 18 }}>Direct Message</h3>
+             <p style={{ fontSize: 13, color: 'var(--dim)', marginBottom: 16 }}>Sending message to {getUserName(dmTarget.authorId)}.</p>
+             <textarea 
+               value={dmText}
+               onChange={e => setDmText(e.target.value)}
+               placeholder="Write a pastoral note..."
+               style={{ width: '100%', height: 120, background: 'var(--mutedCard)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, color: 'var(--text)', fontFamily: 'var(--sans)', resize: 'none', marginBottom: 16 }}
+             />
+             <div style={{ display: 'flex', gap: 12 }}>
+                <button onClick={() => setDmTarget(null)} style={{ flex: 1, padding: 12, border: 'none', background: 'var(--mutedCard)', color: 'var(--text)', borderRadius: 12, cursor: 'pointer', fontWeight: 800 }}>Cancel</button>
+                <button onClick={sendDM} style={{ flex: 1, padding: 12, border: 'none', background: 'var(--gold)', color: '#fff', borderRadius: 12, cursor: 'pointer', fontWeight: 800 }}>Send message</button>
+             </div>
+          </div>
         </div>
       )}
     </div>

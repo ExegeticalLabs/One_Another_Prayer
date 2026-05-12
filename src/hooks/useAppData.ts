@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, doc, getDoc, setDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, onSnapshot, query, orderBy, serverTimestamp, where } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 
 export function useAppData() {
@@ -10,13 +10,15 @@ export function useAppData() {
 
   const [prayers, setPrayers] = useState<any[]>([]);
   const [journal, setJournal] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   
   // Church logs fetched from Firebase
   const [churchLogs, setChurchLogs] = useState<any[]>([]);
   // Personal logs kept locally
   const [personalLogs, setPersonalLogs] = useState<any[]>([]);
   
-  const [bookmarks, setBookmarks] = useState<any[]>([]);
+  // Bookmarks kept locally
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
 
   // Auth Listener
   useEffect(() => {
@@ -61,6 +63,9 @@ export function useAppData() {
       
       const lStored = localStorage.getItem(`pf_logs_${user.uid}`);
       if (lStored) setPersonalLogs(JSON.parse(lStored));
+      
+      const bStored = localStorage.getItem(`pf_bookmarks_${user.uid}`);
+      if (bStored) setBookmarks(JSON.parse(bStored));
     } catch(e) {
       console.error("Local storage error:", e);
     }
@@ -93,19 +98,19 @@ export function useAppData() {
       (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/logs`)
     );
 
-    const unsubBookmarks = onSnapshot(
-      query(collection(db, `users/${user.uid}/bookmarks`), orderBy('createdAt', 'desc')),
+    const unsubMessages = onSnapshot(
+      query(collection(db, `messages`), where('toId', '==', user.uid)),
       (snap) => {
-        const b = snap.docs.map(doc => doc.data().prayerId);
-        setBookmarks(b);
+        const m = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a: any, b: any) => (b.createdAt?.toMillis ? b.createdAt.toMillis() : Date.now()) - (a.createdAt?.toMillis ? a.createdAt.toMillis() : Date.now()));
+        setMessages(m);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/bookmarks`)
+      (error) => handleFirestoreError(error, OperationType.LIST, `messages`)
     );
 
     return () => {
       unsubPrayers();
       unsubLogs();
-      unsubBookmarks();
+      unsubMessages();
     };
   }, [user]);
 
@@ -138,10 +143,21 @@ export function useAppData() {
     localStorage.setItem(`pf_logs_${user.uid}`, JSON.stringify(updated));
   };
 
+  const toggleLocalBookmark = (prayerId: string) => {
+    if (!user) return;
+    const isBookmarked = bookmarks.includes(prayerId);
+    const updated = isBookmarked 
+      ? bookmarks.filter(id => id !== prayerId)
+      : [...bookmarks, prayerId];
+    setBookmarks(updated);
+    localStorage.setItem(`pf_bookmarks_${user.uid}`, JSON.stringify(updated));
+    return !isBookmarked;
+  };
+
   const prayerLogs = [...churchLogs, ...personalLogs];
 
   return { 
-    user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, 
-    addJournalEntry, addPersonalLog 
+    user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, messages,
+    addJournalEntry, addPersonalLog, toggleLocalBookmark
   };
 }

@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { 
   Plus, X, Moon, Sun, Home, Briefcase, 
-  Users, Book, Wind, ChevronDown, Sparkles, ArrowRight, Bookmark, LogIn, LogOut
+  Users, Book, Wind, ChevronDown, Sparkles, ArrowRight, Bookmark, LogIn, LogOut, Bell
 } from "lucide-react";
 
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
@@ -19,12 +19,13 @@ import { CategoryPill } from './components/CategoryPill';
 import { FitnessRing } from './components/FitnessRing';
 import { Modal } from './components/Modal';
 import { AdminPanel } from './components/AdminPanel';
+import { triagePrayer } from './services/aiService';
 
 export default function App() {
   const [theme, setTheme] = useLS("pf_theme", "dark");
   const [tab, setTab] = useState("feed");
   
-  const { user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, addJournalEntry, addPersonalLog } = useAppData();
+  const { user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, messages, addJournalEntry, addPersonalLog, toggleLocalBookmark } = useAppData();
 
   const [goals] = useLS<any>("pf_goals_v9", { church: { mins: 10, count: 5, needs: 3 }, personal: { mins: 5, count: 3 } });
 
@@ -36,6 +37,11 @@ export default function App() {
   const [composeCat, setComposeCat] = useState("Other");
   const [composeAnon, setComposeAnon] = useState(false);
   const [isFork, setIsFork] = useState(false);
+  
+  const [markAnsweredPrompt, setMarkAnsweredPrompt] = useState<any>(null);
+  const [answerNote, setAnswerNote] = useState("");
+  const [showInbox, setShowInbox] = useState(false);
+  const unreadCount = useMemo(() => messages.filter(m => !m.read).length, [messages]);
 
   const [dash, setDash] = useState(false);
   const [dashPeriod, setDashPeriod] = useState("day");
@@ -92,20 +98,14 @@ export default function App() {
   const toggleBookmark = async (id: any) => {
     if (!user) return;
     try {
-      const docRef = doc(db, `users/${user.uid}/bookmarks`, id);
-      if (bookmarks.includes(id)) {
-        await deleteDoc(docRef);
-        triggerNotif("Bookmark removed");
-      } else {
-        await setDoc(docRef, {
-          userId: user.uid,
-          prayerId: id,
-          createdAt: serverTimestamp()
-        });
+      const isBookmarked = toggleLocalBookmark(id);
+      if (isBookmarked) {
         triggerNotif("Prayer bookmarked");
+      } else {
+        triggerNotif("Bookmark removed");
       }
     } catch(e) {
-      handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}/bookmarks`);
+      console.error("Error toggling bookmark:", e);
     }
   };
 
@@ -116,16 +116,21 @@ export default function App() {
         addJournalEntry({ category: composeCat, text: composeText.trim() });
         triggerNotif("Saved to Journal");
       } else {
+        triggerNotif("Analyzing prayer...");
+        const triage = await triagePrayer(composeText.trim());
+        
         await addDoc(collection(db, 'prayers'), {
           author: composeAnon ? "A Church Member" : user.displayName || "You",
           authorId: user.uid,
-          category: composeCat,
+          category: triage.suggestedCategory || composeCat,
           text: composeText.trim(),
           createdAt: serverTimestamp(),
           anon: composeAnon,
           answered: false,
           prayCount: 0,
-          prayTime: 0
+          prayTime: 0,
+          urgency: triage.urgency,
+          triageReason: triage.reason
         });
         triggerNotif("Shared with Church");
       }
@@ -149,6 +154,22 @@ export default function App() {
     setIsFork(fork);
   };
 
+  const markPrayerAnswered = async () => {
+    if (!markAnsweredPrompt || !user) return;
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'prayers', markAnsweredPrompt.id), {
+        answered: true,
+        answerNote: answerNote.trim() || ""
+      });
+      triggerNotif("Prayer marked as answered!");
+      setMarkAnsweredPrompt(null);
+      setAnswerNote("");
+    } catch(e) {
+       handleFirestoreError(e, OperationType.WRITE, 'prayers');
+    }
+  };
+
   const getPrivateStats = (prayer: any) => {
     // If stats don't exist yet (from older posts), fallback to 0
     const totalSec = prayer.prayTime || 0;
@@ -156,13 +177,23 @@ export default function App() {
     return { time: fmtMin(secondsToMinutes(totalSec)), count };
   };
 
+  const markMessageRead = async (id: string) => {
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'messages', id), { read: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'messages');
+    }
+  };
+
   const feed = useMemo(() => prayers.filter((p) => {
-    if (p.answered) return false;
+    if (p.answered || p.status === 'hidden') return false;
     const t = p.createdAt?.toMillis ? p.createdAt.toMillis() : (p.createdAt || Date.now());
     return (Date.now() - t) < 7 * 86400000;
   }), [prayers]);
   
   const wall = useMemo(() => prayers.filter((p) => {
+    if (p.status === 'hidden') return false;
     if (p.answered) return true;
     const t = p.createdAt?.toMillis ? p.createdAt.toMillis() : (p.createdAt || Date.now());
     return (Date.now() - t) >= 7 * 86400000;
@@ -410,6 +441,10 @@ export default function App() {
             <div className="sub">by Koinonia</div>
           </div>
           <div className="hdrBtns">
+            <button className="ghostBtn" onClick={() => setShowInbox(true)} style={{ position: 'relative' }}>
+              <Bell size={14} /> 
+              {unreadCount > 0 && <div style={{ position: 'absolute', top: -4, right: -4, width: 12, height: 12, background: '#e06060', borderRadius: '50%' }} />}
+            </button>
             <button className="ghostBtn" onClick={() => setDash(true)}>
               <ClockIcon size={14} /> My Prayer Life
             </button>
@@ -437,7 +472,7 @@ export default function App() {
       <main className="content">
         <div className="snap">
           {tab === "admin" ? (
-             <AdminPanel prayers={prayers} currentUserId={user.uid} />
+             <AdminPanel prayers={prayers} currentUserId={user.uid} currentUserName={user.displayName || "Admin"} />
           ) : tab === "feed" ? (
             feed.length ? (
               feed.map((p, i) => (
@@ -457,9 +492,18 @@ export default function App() {
                     </div>
 
                     {p.authorId === user?.uid && (
-                      <div className="privateStats">
-                        <div className="pStatItem"><ClockIcon size={12} /> {getPrivateStats(p).time} Total</div>
-                        <div className="pStatItem"><Users size={12} /> {getPrivateStats(p).count} Prayed</div>
+                      <div className="privateStats" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <div className="pStatItem"><ClockIcon size={12} /> {getPrivateStats(p).time} Total</div>
+                          <div className="pStatItem"><Users size={12} /> {getPrivateStats(p).count} Prayed</div>
+                        </div>
+                        <button 
+                          className="ghostBtn" 
+                          style={{ padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: 6, fontSize: 11, alignSelf: 'flex-start', color: 'var(--gold)', fontWeight: 800, textTransform: 'uppercase' }}
+                          onClick={() => setMarkAnsweredPrompt(p)}
+                        >
+                          Mark Answered
+                        </button>
                       </div>
                     )}
                   </div>
@@ -547,19 +591,45 @@ export default function App() {
               wall.map((p, i) => (
                 <Screen key={p.id}>
                   <div className="topRow">
-                    <div className="badge" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--gold)' }}><Sparkles size={12} /> ANSWERED</div>
+                    <div className="badge" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', color: p.answered ? 'var(--gold)' : 'var(--faint)' }}>
+                      {p.answered ? <><Sparkles size={12} /> ANSWERED</> : <><Wind size={12} /> CONTINUED INTERCESSION</>}
+                    </div>
                   </div>
                   <div className="textWrap">
                     <CategoryPill category={p.category} />
                     <p className="prayText">{p.text}</p>
-                    {p.answerNote && <div className="meta" style={{ marginTop: 12 }}>{p.answerNote}</div>}
+                    {p.answerNote && <div className="meta" style={{ marginTop: 12, padding: 12, background: 'var(--mutedCard)', borderRadius: 8, color: 'var(--text)', fontStyle: 'italic' }}>"{p.answerNote}"</div>}
                     <div className="authorRow">
                       <div className="avatar" style={{ background: `linear-gradient(135deg, ${CAT[p.category] || CAT.Other}cc, ${CAT[p.category] || CAT.Other})` }}>
                         {p.anon ? "?" : (p.author || "U")[0]}
                       </div>
-                      <div className="authorText">{p.author} · Answered</div>
+                      <div className="authorText">{p.author} · {p.answered ? "Answered" : "Active"}</div>
                     </div>
+
+                    {p.authorId === user?.uid && !p.answered && (
+                      <div className="privateStats" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <div className="pStatItem"><ClockIcon size={12} /> {getPrivateStats(p).time} Total</div>
+                          <div className="pStatItem"><Users size={12} /> {getPrivateStats(p).count} Prayed</div>
+                        </div>
+                        <button 
+                          className="ghostBtn" 
+                          style={{ padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: 6, fontSize: 11, alignSelf: 'flex-start', color: 'var(--gold)', fontWeight: 800, textTransform: 'uppercase' }}
+                          onClick={() => setMarkAnsweredPrompt(p)}
+                        >
+                          Mark Answered
+                        </button>
+                      </div>
+                    )}
                   </div>
+                  {!p.answered && (
+                    <div className="actions">
+                      <HoldButton onComplete={(elapsed: any) => handlePrayerComplete(p.id, elapsed)} />
+                      <button className={`bookmarkBtn ${bookmarks.includes(p.id) ? 'active' : ''}`} onClick={() => toggleBookmark(p.id)}>
+                        <Bookmark size={20} fill={bookmarks.includes(p.id) ? "currentColor" : "none"} />
+                      </button>
+                    </div>
+                  )}
                 </Screen>
               ))
             ) : (
@@ -626,6 +696,70 @@ export default function App() {
             
             <button className="primary" disabled={!composeText.trim()} onClick={submitCompose}>
               {compose === "journal" ? "Save to Journal" : "Share"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Inbox Modal */}
+      {showInbox && (
+        <Modal onClose={() => setShowInbox(false)}>
+          <div className="sheetHead">
+            <h3 className="sheetTitle">Pastoral Inbox</h3>
+            <button className="ghostBtn" onClick={() => setShowInbox(false)}><X size={18}/></button>
+          </div>
+          <div className="sheetBody" style={{ overflowY: 'auto', maxHeight: '60vh' }}>
+            {messages.length === 0 ? (
+               <div style={{ color: 'var(--dim)', padding: '20px 0', textAlign: 'center' }}>No messages.</div>
+            ) : (
+               messages.map(m => (
+                 <div key={m.id} style={{ 
+                   background: m.read ? 'var(--card)' : 'var(--mutedCard)', 
+                   border: m.read ? '1px solid var(--border)' : '1px solid var(--gold)',
+                   padding: 16, 
+                   borderRadius: 16, 
+                   marginBottom: 12 
+                 }}>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                     <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>From {m.fromName}</div>
+                     <div style={{ fontSize: 11, color: 'var(--faint)' }}>{formatTimeAgo(m.createdAt?.toMillis ? m.createdAt.toMillis() : Date.now())}</div>
+                   </div>
+                   <p style={{ margin: 0, fontFamily: 'var(--serif)', fontSize: 16, color: 'var(--text)', lineHeight: 1.4 }}>{m.text}</p>
+                   {!m.read && (
+                     <button onClick={() => markMessageRead(m.id)} className="ghostBtn" style={{ marginTop: 12 }}>
+                       Mark Read
+                     </button>
+                   )}
+                 </div>
+               ))
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* Answered Modal */}
+      {markAnsweredPrompt && (
+        <Modal onClose={() => { setMarkAnsweredPrompt(null); setAnswerNote(""); }}>
+          <div className="sheetHead">
+            <h3 className="sheetTitle">Prayer Answered</h3>
+            <button className="ghostBtn" onClick={() => { setMarkAnsweredPrompt(null); setAnswerNote(""); }}><X size={18}/></button>
+          </div>
+          <div className="sheetBody">
+            <div className="forkNote" style={{ marginBottom: 16 }}>
+               Praise God! You can optionally share a note about how this prayer was answered. It will be moved to the Answered Wall.
+            </div>
+
+            <textarea 
+              className="ta" 
+              value={answerNote} 
+              onChange={e => setAnswerNote(e.target.value)}
+              placeholder="Optional: How was it answered?"
+              autoFocus
+              style={{ minHeight: 120 }}
+            />
+            
+            <button className="primary" onClick={markPrayerAnswered}>
+              Move to Answered Wall
             </button>
           </div>
         </Modal>

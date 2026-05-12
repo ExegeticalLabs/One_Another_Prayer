@@ -43,9 +43,12 @@ service cloud.firestore {
              data.text is string && data.text.size() > 0 && data.text.size() <= 4096 &&
              data.anon is bool &&
              data.answered is bool &&
+             (data.keys().hasAll(['status']) ? (data.status in ['approved', 'hidden']) : true) &&
              (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true) &&
              (data.keys().hasAll(['prayCount']) ? (data.prayCount is number) : true) &&
-             (data.keys().hasAll(['prayTime']) ? (data.prayTime is number) : true);
+             (data.keys().hasAll(['prayTime']) ? (data.prayTime is number) : true) &&
+             (data.keys().hasAll(['urgency']) ? (data.urgency in ['URGENT', 'ELEVATED', 'STANDARD']) : true) &&
+             (data.keys().hasAll(['triageReason']) ? (data.triageReason is string) : true);
     }
 
     match /prayers/{prayerId} {
@@ -121,6 +124,36 @@ service cloud.firestore {
       // Bookmarks are immutable records
       allow update: if false;
       allow delete: if isOwner(userId) && isValidId(bookmarkId);
+    }
+
+    function isValidDirectMessage(data) {
+      return data.keys().hasAll(['fromId', 'fromName', 'toId', 'prayerId', 'text', 'createdAt', 'read']) &&
+             data.fromId == request.auth.uid &&
+             data.fromName is string && data.fromName.size() <= 64 &&
+             data.toId is string && data.toId.size() <= 128 &&
+             data.prayerId is string && data.prayerId.size() <= 128 &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 2000 &&
+             data.read is bool;
+    }
+
+    match /messages/{messageId} {
+      allow get: if isSignedIn() && (existing().toId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.toId == request.auth.uid || isAdmin());
+      
+      // Only admins/elders can create a direct message
+      allow create: if isAdmin() && 
+                    isValidId(messageId) &&
+                    isValidDirectMessage(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().read == false;
+      
+      // Members can only update the read status of their own messages
+      allow update: if isSignedIn() &&
+                    existing().toId == request.auth.uid &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+                    incoming().read == true;
+                    
+      allow delete: if isAdmin();
     }
   }
 }
