@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { collection, addDoc, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, deleteDoc, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
 
 import { db, auth, handleFirestoreError, OperationType } from './lib/firebase';
 import { useAppData } from './hooks/useAppData';
@@ -23,7 +23,7 @@ export default function App() {
   const [theme, setTheme] = useLS("pf_theme", "dark");
   const [tab, setTab] = useState("feed");
   
-  const { user, authReady, prayers, journal, prayerLogs, bookmarks } = useAppData();
+  const { user, authReady, prayers, journal, prayerLogs, bookmarks, addJournalEntry, addPersonalLog } = useAppData();
 
   const [goals] = useLS<any>("pf_goals_v9", { church: { mins: 10, count: 5, needs: 3 }, personal: { mins: 5, count: 3 } });
 
@@ -60,16 +60,31 @@ export default function App() {
     if (!user) return;
     const type = tab === "journal" ? "personal" : "church";
     try {
-      await addDoc(collection(db, `users/${user.uid}/logs`), {
-        userId: user.uid,
-        prayerId: id,
-        type,
-        durationSec: elapsed,
-        createdAt: serverTimestamp()
-      });
-      triggerNotif(`Recorded · ${elapsed}s`);
+      if (type === "personal") {
+        addPersonalLog({ prayerId: id, durationSec: elapsed });
+        triggerNotif(`Recorded · ${elapsed}s`);
+      } else {
+        await addDoc(collection(db, `users/${user.uid}/logs`), {
+          userId: user.uid,
+          prayerId: id,
+          type,
+          durationSec: elapsed,
+          createdAt: serverTimestamp()
+        });
+        
+        // Atomically increment the global stats for the prayer
+        await updateDoc(doc(db, 'prayers', id), {
+          prayCount: increment(1),
+          prayTime: increment(elapsed)
+        });
+        triggerNotif(`Recorded · ${elapsed}s`);
+      }
     } catch(e) {
-      handleFirestoreError(e, OperationType.CREATE, `users/${user.uid}/logs`);
+      if (type !== 'personal') {
+        handleFirestoreError(e, OperationType.WRITE, 'prayer stats');
+      } else {
+        console.error(e);
+      }
     }
   };
 
@@ -97,12 +112,7 @@ export default function App() {
     if (!composeText.trim() || !user) return;
     try {
       if (compose === "journal") {
-        await addDoc(collection(db, `users/${user.uid}/journal`), {
-          userId: user.uid,
-          category: composeCat,
-          text: composeText.trim(),
-          createdAt: serverTimestamp()
-        });
+        addJournalEntry({ category: composeCat, text: composeText.trim() });
         triggerNotif("Saved to Journal");
       } else {
         await addDoc(collection(db, 'prayers'), {
@@ -112,7 +122,9 @@ export default function App() {
           text: composeText.trim(),
           createdAt: serverTimestamp(),
           anon: composeAnon,
-          answered: false
+          answered: false,
+          prayCount: 0,
+          prayTime: 0
         });
         triggerNotif("Shared with Church");
       }
@@ -120,7 +132,11 @@ export default function App() {
       setComposeText("");
       setIsFork(false);
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, compose === "journal" ? `users/${user.uid}/journal` : 'prayers');
+      if (compose !== "journal") {
+        handleFirestoreError(e, OperationType.CREATE, 'prayers');
+      } else {
+        console.error(e);
+      }
     }
   };
 
@@ -132,14 +148,24 @@ export default function App() {
     setIsFork(fork);
   };
 
-  const getPrivateStats = (id: any) => {
-    const related = prayerLogs.filter(log => log.prayerId === id);
-    const totalSec = related.reduce((acc, curr) => acc + (curr.durationSec || 0), 0);
-    return { time: fmtMin(secondsToMinutes(totalSec)) };
+  const getPrivateStats = (prayer: any) => {
+    // If stats don't exist yet (from older posts), fallback to 0
+    const totalSec = prayer.prayTime || 0;
+    const count = prayer.prayCount || 0;
+    return { time: fmtMin(secondsToMinutes(totalSec)), count };
   };
 
-  const feed = useMemo(() => prayers.filter((p) => !p.answered), [prayers]);
-  const wall = useMemo(() => prayers.filter((p) => p.answered), [prayers]);
+  const feed = useMemo(() => prayers.filter((p) => {
+    if (p.answered) return false;
+    const t = p.createdAt?.toMillis ? p.createdAt.toMillis() : (p.createdAt || Date.now());
+    return (Date.now() - t) < 7 * 86400000;
+  }), [prayers]);
+  
+  const wall = useMemo(() => prayers.filter((p) => {
+    if (p.answered) return true;
+    const t = p.createdAt?.toMillis ? p.createdAt.toMillis() : (p.createdAt || Date.now());
+    return (Date.now() - t) >= 7 * 86400000;
+  }), [prayers]);
   const bookmarksList = useMemo(() => {
     const allItems = [...prayers, ...journal];
     return allItems.filter(item => bookmarks.includes(item.id));
@@ -209,7 +235,8 @@ export default function App() {
             --gold: #2f7bbd;
             --card: rgba(255,255,255,0.92);
           }
-          .loginBtn { padding: 14px 24px; background: var(--gold); border: none; border-radius: 12px; color: #fff; font-family: var(--sans); font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+          .loginBtn { padding: 14px 24px; background: var(--gold); border: none; border-radius: 12px; color: #fff; font-family: var(--sans); font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: transform 0.2s; }
+          .loginBtn:active { transform: scale(0.95); }
         `}</style>
         <Wind size={64} color="var(--gold)" style={{marginBottom: 24}} />
         <h1 style={{fontFamily: 'var(--sans)', fontSize: 24, fontWeight: 900, marginBottom: 8}}>One Another</h1>
@@ -217,6 +244,10 @@ export default function App() {
         <button className="loginBtn" onClick={handleLogin}>
           <LogIn size={18} /> Sign in with Google
         </button>
+        <div style={{ marginTop: 24, fontSize: 13, color: 'var(--faint)', textAlign: 'center', maxWidth: 280, lineHeight: 1.4, opacity: 0.7 }}>
+          If login loops in the preview, click the ↗️ icon in the top right to open the app in a new tab.
+        </div>
+        {notif && <div style={{ marginTop: 16, fontSize: 14, color: '#e06060', fontWeight: 'bold' }}>{notif}</div>}
       </div>
     );
   }
@@ -410,7 +441,8 @@ export default function App() {
 
                     {p.authorId === user?.uid && (
                       <div className="privateStats">
-                        <div className="pStatItem"><ClockIcon size={12} /> {getPrivateStats(p.id).time} Prayer Time</div>
+                        <div className="pStatItem"><ClockIcon size={12} /> {getPrivateStats(p).time} Total</div>
+                        <div className="pStatItem"><Users size={12} /> {getPrivateStats(p).count} Prayed</div>
                       </div>
                     )}
                   </div>

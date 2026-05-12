@@ -9,7 +9,12 @@ export function useAppData() {
 
   const [prayers, setPrayers] = useState<any[]>([]);
   const [journal, setJournal] = useState<any[]>([]);
-  const [prayerLogs, setPrayerLogs] = useState<any[]>([]);
+  
+  // Church logs fetched from Firebase
+  const [churchLogs, setChurchLogs] = useState<any[]>([]);
+  // Personal logs kept locally
+  const [personalLogs, setPersonalLogs] = useState<any[]>([]);
+  
   const [bookmarks, setBookmarks] = useState<any[]>([]);
 
   // Auth Listener
@@ -21,12 +26,25 @@ export function useAppData() {
     return () => unsub();
   }, []);
 
+  // Set up local storage sources
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const jStored = localStorage.getItem(`pf_journal_${user.uid}`);
+      if (jStored) setJournal(JSON.parse(jStored));
+      
+      const lStored = localStorage.getItem(`pf_logs_${user.uid}`);
+      if (lStored) setPersonalLogs(JSON.parse(lStored));
+    } catch(e) {
+      console.error("Local storage error:", e);
+    }
+  }, [user]);
+
   // Firestore Listeners
   useEffect(() => {
     if (!user) {
       setPrayers([]);
-      setJournal([]);
-      setPrayerLogs([]);
+      setChurchLogs([]);
       setBookmarks([]);
       return;
     }
@@ -40,20 +58,11 @@ export function useAppData() {
       (error) => handleFirestoreError(error, OperationType.LIST, 'prayers')
     );
 
-    const unsubJournal = onSnapshot(
-      query(collection(db, `users/${user.uid}/journal`), orderBy('createdAt', 'desc')),
-      (snap) => {
-        const j = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setJournal(j);
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/journal`)
-    );
-
     const unsubLogs = onSnapshot(
       query(collection(db, `users/${user.uid}/logs`), orderBy('createdAt', 'desc')),
       (snap) => {
         const l = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setPrayerLogs(l);
+        setChurchLogs(l);
       },
       (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/logs`)
     );
@@ -69,11 +78,44 @@ export function useAppData() {
 
     return () => {
       unsubPrayers();
-      unsubJournal();
       unsubLogs();
       unsubBookmarks();
     };
   }, [user]);
 
-  return { user, authReady, prayers, journal, prayerLogs, bookmarks };
+  const addJournalEntry = (entry: { category: string, text: string }) => {
+    if (!user) return;
+    const newEntry = {
+      id: crypto.randomUUID(),
+      userId: user.uid,
+      category: entry.category,
+      text: entry.text,
+      createdAt: Date.now()
+    };
+    const updated = [newEntry, ...journal];
+    setJournal(updated);
+    localStorage.setItem(`pf_journal_${user.uid}`, JSON.stringify(updated));
+  };
+
+  const addPersonalLog = (log: { prayerId: string, durationSec: number }) => {
+    if (!user) return;
+    const newEntry = {
+      id: crypto.randomUUID(),
+      userId: user.uid,
+      prayerId: log.prayerId,
+      type: 'personal',
+      durationSec: log.durationSec,
+      createdAt: Date.now()
+    };
+    const updated = [newEntry, ...personalLogs];
+    setPersonalLogs(updated);
+    localStorage.setItem(`pf_logs_${user.uid}`, JSON.stringify(updated));
+  };
+
+  const prayerLogs = [...churchLogs, ...personalLogs];
+
+  return { 
+    user, authReady, prayers, journal, prayerLogs, bookmarks, 
+    addJournalEntry, addPersonalLog 
+  };
 }

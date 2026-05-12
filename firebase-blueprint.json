@@ -12,21 +12,11 @@
         "createdAt": { "type": "number", "description": "Server timestamp of creation." },
         "anon": { "type": "boolean", "description": "Whether it is anonymous." },
         "answered": { "type": "boolean", "description": "Whether the prayer has been answered." },
-        "answerNote": { "type": "string", "description": "Optional note when answered." }
+        "answerNote": { "type": "string", "description": "Optional note when answered." },
+        "prayCount": { "type": "number", "description": "Global count of people who prayed." },
+        "prayTime": { "type": "number", "description": "Global time spent praying." }
       },
       "required": ["author", "authorId", "category", "text", "createdAt", "anon", "answered"]
-    },
-    "JournalEntry": {
-      "title": "JournalEntry",
-      "description": "A private journal reflection.",
-      "type": "object",
-      "properties": {
-        "userId": { "type": "string" },
-        "category": { "type": "string" },
-        "text": { "type": "string" },
-        "createdAt": { "type": "number" }
-      },
-      "required": ["userId", "category", "text", "createdAt"]
     },
     "PrayerLog": {
       "title": "PrayerLog",
@@ -57,10 +47,6 @@
     "/prayers/{prayerId}": {
       "schema": { "$ref": "#/entities/Prayer" },
       "description": "Global prayer requests shared with everyone."
-    },
-    "/users/{userId}/journal/{journalId}": {
-      "schema": { "$ref": "#/entities/JournalEntry" },
-      "description": "Private journal entries."
     },
     "/users/{userId}/logs/{logId}": {
       "schema": { "$ref": "#/entities/PrayerLog" },

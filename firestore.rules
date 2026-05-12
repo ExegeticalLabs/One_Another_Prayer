@@ -18,14 +18,15 @@ service cloud.firestore {
 
     function isValidPrayer(data) {
       return data.keys().hasAll(['author', 'authorId', 'category', 'text', 'createdAt', 'anon', 'answered']) &&
-             data.keys().size() in [7, 8] &&
              data.author is string && data.author.size() <= 64 &&
              data.authorId == request.auth.uid &&
              data.category is string && data.category.size() <= 64 &&
              data.text is string && data.text.size() > 0 && data.text.size() <= 4096 &&
              data.anon is bool &&
              data.answered is bool &&
-             (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true);
+             (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true) &&
+             (data.keys().hasAll(['prayCount']) ? (data.prayCount is number) : true) &&
+             (data.keys().hasAll(['prayTime']) ? (data.prayTime is number) : true);
     }
 
     match /prayers/{prayerId} {
@@ -40,23 +41,27 @@ service cloud.firestore {
                     
       allow update: if isSignedIn() &&
                     isValidId(prayerId) &&
-                    existing().authorId == request.auth.uid &&
                     existing().answered == false && // terminal state locking
-                    isValidPrayer(incoming()) &&
-                    incoming().authorId == existing().authorId &&
-                    incoming().createdAt == existing().createdAt &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['answered', 'answerNote', 'text', 'category']) &&
-                    (incoming().answered == true || incoming().answered == false);
+                    (
+                      // Action: Poster editing fields
+                      (
+                        existing().authorId == request.auth.uid &&
+                        isValidPrayer(incoming()) &&
+                        incoming().authorId == existing().authorId &&
+                        incoming().createdAt == existing().createdAt &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['answered', 'answerNote', 'text', 'category']) &&
+                        (incoming().answered == true || incoming().answered == false)
+                      ) 
+                      ||
+                      // Action: Anyone Praying (Increment)
+                      (
+                        incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
+                        incoming().prayCount == existing().prayCount + 1 &&
+                        incoming().prayTime >= existing().prayTime
+                      )
+                    );
                     
       allow delete: if isSignedIn() && isValidId(prayerId) && existing().authorId == request.auth.uid;
-    }
-
-    function isValidJournalEntry(data) {
-      return data.keys().hasAll(['userId', 'category', 'text', 'createdAt']) &&
-             data.keys().size() == 4 &&
-             data.userId == request.auth.uid &&
-             data.category is string && data.category.size() <= 64 &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 4096;
     }
 
     function isValidPrayerLog(data) {
@@ -75,22 +80,6 @@ service cloud.firestore {
              data.prayerId is string && data.prayerId.size() <= 128;
     }
 
-    match /users/{userId}/journal/{journalId} {
-      allow get: if isOwner(userId) && isValidId(journalId);
-      allow list: if isOwner(userId);
-      allow create: if isOwner(userId) && 
-                    isValidId(journalId) && 
-                    isValidJournalEntry(incoming()) &&
-                    incoming().createdAt == request.time;
-      allow update: if isOwner(userId) && 
-                    isValidId(journalId) && 
-                    isValidJournalEntry(incoming()) &&
-                    incoming().userId == existing().userId &&
-                    incoming().createdAt == existing().createdAt &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['text', 'category']);
-      allow delete: if isOwner(userId) && isValidId(journalId);
-    }
-    
     match /users/{userId}/logs/{logId} {
       allow get: if isOwner(userId) && isValidId(logId);
       allow list: if isOwner(userId);
