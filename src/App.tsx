@@ -27,7 +27,7 @@ export default function App() {
   const [theme, setTheme] = useLS("pf_theme", "dark");
   const [tab, setTab] = useState("feed");
   
-  const { user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, addJournalEntry, addPersonalLog, toggleLocalBookmark } = useAppData();
+  const { user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, prayerStats, addJournalEntry, addPersonalLog, toggleLocalBookmark } = useAppData();
 
   const [goals] = useLS<any>("pf_goals_v9", { church: { mins: 10, count: 5, needs: 3 }, personal: { mins: 5, count: 3 } });
 
@@ -81,11 +81,21 @@ export default function App() {
           createdAt: serverTimestamp()
         });
         
-        // Atomically increment the global stats for the prayer
-        await updateDoc(doc(db, `churches/${church.id}/prayers`, id), {
-          prayCount: increment(1),
-          prayTime: increment(elapsed)
-        });
+        // Atomically increment the global stats for the prayer in the private sub-collection
+        const statsRef = doc(db, `churches/${church.id}/prayers/${id}/internal/stats`);
+        try {
+          await updateDoc(statsRef, {
+            prayCount: increment(1),
+            prayTime: increment(elapsed)
+          });
+        } catch (err) {
+          // If doc doesn't exist (older prayers or first prayer), initialize it
+          // Rules allow create if active member
+          await setDoc(statsRef, {
+            prayCount: 1,
+            prayTime: elapsed
+          });
+        }
         triggerNotif(`Recorded · ${elapsed}s`);
       }
     } catch(e) {
@@ -121,7 +131,7 @@ export default function App() {
         triggerNotif("Analyzing prayer...");
         const triage = await triagePrayer(composeText.trim());
         
-        await addDoc(collection(db, `churches/${church.id}/prayers`), {
+        const prayerRef = await addDoc(collection(db, `churches/${church.id}/prayers`), {
           churchId: church.id,
           author: composeAnon ? "A Church Member" : user.displayName || "You",
           authorId: user.uid,
@@ -130,11 +140,16 @@ export default function App() {
           createdAt: serverTimestamp(),
           anon: composeAnon,
           answered: false,
-          prayCount: 0,
-          prayTime: 0,
           urgency: triage.urgency,
           triageReason: triage.reason
         });
+        
+        // Initialize private stats
+        await setDoc(doc(db, `churches/${church.id}/prayers/${prayerRef.id}/internal/stats`), {
+          prayCount: 0,
+          prayTime: 0
+        });
+
         triggerNotif("Shared with Church");
       }
       setCompose(null);
@@ -174,9 +189,9 @@ export default function App() {
   };
 
   const getPrivateStats = (prayer: any) => {
-    // If stats don't exist yet (from older posts), fallback to 0
-    const totalSec = prayer.prayTime || 0;
-    const count = prayer.prayCount || 0;
+    const stats = prayerStats[prayer.id] || { prayCount: 0, prayTime: 0 };
+    const totalSec = stats.prayTime || 0;
+    const count = stats.prayCount || 0;
     return { time: fmtMin(secondsToMinutes(totalSec)), count };
   };
 
@@ -196,17 +211,36 @@ export default function App() {
       return (Date.now() - t) < 7 * 86400000;
     });
 
-    // Quietly sort to prioritize un-prayed for items (balanced attention)
-    // We sort by prayCount ascending, then by age (newer first)
+    // Balanced Rotation Logic:
+    // 1. Urgency (URGENT > ELEVATED > STANDARD)
+    // 2. Personal attention: Have I prayed for this in the last 24 hours?
+    // 3. Freshness (Newer first)
+    // 4. Quiet shuffle for variety
+    
+    const userPrayedIds = new Set(
+      prayerLogs
+        .filter(l => (Date.now() - (l.createdAt?.toMillis || 0)) < 24 * 3600000)
+        .map(l => l.prayerId)
+    );
+
     return active.sort((a, b) => {
-      const aCount = a.prayCount || 0;
-      const bCount = b.prayCount || 0;
-      if (aCount !== bCount) return aCount - bCount;
+      // Priority 1: Urgency
+      const uMap: Record<string, number> = { 'URGENT': 0, 'ELEVATED': 1, 'STANDARD': 2 };
+      const aU = uMap[a.urgency] ?? 2;
+      const bU = uMap[b.urgency] ?? 2;
+      if (aU !== bU) return aU - bU;
+
+      // Priority 2: Personal attention (things I haven't prayed for today)
+      const aPrayed = userPrayedIds.has(a.id);
+      const bPrayed = userPrayedIds.has(b.id);
+      if (aPrayed !== bPrayed) return aPrayed ? 1 : -1;
+
+      // Priority 3: Freshness
       const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
       const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
       return bTime - aTime;
     });
-  }, [prayers]);
+  }, [prayers, prayerLogs]);
   
   const wall = useMemo(() => prayers.filter((p) => {
     if (p.status === 'hidden') return false;
@@ -485,7 +519,7 @@ export default function App() {
       <main className="content">
         <div className="snap">
           {tab === "admin" ? (
-             <AdminPanel prayers={prayers} currentUserId={user.uid} currentUserName={user.displayName || "Admin"} churchId={church.id} />
+             <AdminPanel prayers={prayers} currentUserId={user.uid} currentUserName={user.displayName || "Admin"} churchId={church.id} prayerStats={prayerStats} />
           ) : tab === "feed" ? (
             feed.length ? (
               feed.map((p, i) => (
@@ -567,6 +601,9 @@ export default function App() {
                       <div className="pDesc">{p.desc}</div>
                     </div>
                   ))}
+                </div>
+                <div style={{ marginTop: 40, fontSize: 11, color: 'var(--faint)', textAlign: 'center', maxWidth: 280, fontStyle: 'italic' }}>
+                   Reflections are stored locally on your device and are never sent to the server or visible to others.
                 </div>
               </Screen>
             </>

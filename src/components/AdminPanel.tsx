@@ -11,7 +11,7 @@ const URGENCY_STYLES: Record<string, any> = {
   STANDARD: { background: 'var(--border)', color: 'var(--dim)' }
 };
 
-export function AdminPanel({ prayers, currentUserId, currentUserName, churchId }: { prayers: any[], currentUserId: string, currentUserName?: string, churchId: string }) {
+export function AdminPanel({ prayers, currentUserId, currentUserName, churchId, prayerStats }: { prayers: any[], currentUserId: string, currentUserName?: string, churchId: string, prayerStats: Record<string, any> }) {
   const [activeTab, setActiveTab] = useState("prayers");
   const [users, setUsers] = useState<any[]>([]);
   const [dmTarget, setDmTarget] = useState<any>(null);
@@ -170,7 +170,7 @@ export function AdminPanel({ prayers, currentUserId, currentUserName, churchId }
                 <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
                   <div style={{ flex: 1, padding: '8px 12px', background: 'var(--card)', borderRadius: 8, display: 'flex', flexDirection: 'column' }}>
                     <span style={{ fontSize: 10, color: 'var(--dim)', fontWeight: 800, letterSpacing: 0.5 }}>PRAYED FOR BY</span>
-                    <span style={{ fontSize: 16, color: 'var(--text)', fontWeight: 900 }}>{p.prayCount || 0}</span>
+                    <span style={{ fontSize: 16, color: 'var(--text)', fontWeight: 900 }}>{(prayerStats[p.id] || {}).prayCount || 0}</span>
                   </div>
                   <div style={{ flex: 1, padding: '8px 12px', background: 'var(--card)', borderRadius: 8, display: 'flex', flexDirection: 'column' }}>
                     <span style={{ fontSize: 10, color: 'var(--dim)', fontWeight: 800, letterSpacing: 0.5 }}>STATUS</span>

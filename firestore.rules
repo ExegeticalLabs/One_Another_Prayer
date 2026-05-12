@@ -108,8 +108,6 @@ service cloud.firestore {
                data.answered is bool &&
                (data.keys().hasAll(['status']) ? (data.status in ['approved', 'hidden']) : true) &&
                (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true) &&
-               (data.keys().hasAll(['prayCount']) ? (data.prayCount is number) : true) &&
-               (data.keys().hasAll(['prayTime']) ? (data.prayTime is number) : true) &&
                (data.keys().hasAll(['urgency']) ? (data.urgency in ['URGENT', 'ELEVATED', 'STANDARD']) : true) &&
                (data.keys().hasAll(['triageReason']) ? (data.triageReason is string) : true);
       }
@@ -138,13 +136,6 @@ service cloud.firestore {
                           (incoming().answered == true || incoming().answered == false)
                         ) 
                         ||
-                        // Action: Anyone Praying (Increment)
-                        (
-                          incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
-                          incoming().prayCount == existing().prayCount + 1 &&
-                          incoming().prayTime >= existing().prayTime
-                        )
-                        ||
                         // Action: Elder Hidden Toggle
                         (
                           isElder(churchId) &&
@@ -154,6 +145,31 @@ service cloud.firestore {
                       )) || isAdmin();
                       
         allow delete: if (isActiveMember(churchId) && isValidId(prayerId) && existing().authorId == request.auth.uid) || isElder(churchId) || isAdmin();
+
+        match /internal/stats {
+          // Data-level privacy: only author or elder can see the counts
+          allow get: if isOwner(get(/databases/$(database)/documents/churches/$(churchId)/prayers/$(prayerId)).data.authorId) || isElder(churchId) || isAdmin();
+          // NO LIST allowed for members
+          allow list: if isElder(churchId) || isAdmin();
+
+          function isValidStats(data) {
+            return data.keys().hasAll(['prayCount', 'prayTime']) &&
+                   data.prayCount is number &&
+                   data.prayTime is number;
+          }
+
+          allow create: if isActiveMember(churchId) && isValidStats(incoming());
+          allow update: if (isActiveMember(churchId) &&
+                        (
+                          // Regular members can only increment (write-only-like update)
+                          (incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
+                           incoming().prayCount == existing().prayCount + 1 &&
+                           incoming().prayTime >= existing().prayTime)
+                          ||
+                          // Admins/Elders can do more if needed
+                          isElder(churchId)
+                        )) || isAdmin();
+        }
       }
 
       function isValidDirectMessage(data) {

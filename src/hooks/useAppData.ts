@@ -11,6 +11,7 @@ export function useAppData() {
   const [prayers, setPrayers] = useState<any[]>([]);
   const [journal, setJournal] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+  const [prayerStats, setPrayerStats] = useState<Record<string, any>>({});
   
   const [membership, setMembership] = useState<any>(undefined);
   const [church, setChurch] = useState<any>(undefined);
@@ -147,12 +148,34 @@ export function useAppData() {
       (error) => handleFirestoreError(error, OperationType.LIST, `churches/${church.id}/messages`)
     );
 
+    // Listen to private stats
+    const unsubsStats: (() => void)[] = [];
+    
+    prayers.forEach(p => {
+      const isElder = membership?.role === 'elder' || membership?.role === 'admin';
+      if (p.authorId === user.uid || isElder) {
+        const unsub = onSnapshot(
+          doc(db, `churches/${church.id}/prayers/${p.id}/internal/stats`),
+          (snap) => {
+            if (snap.exists()) {
+              setPrayerStats(prev => ({ ...prev, [p.id]: snap.data() }));
+            }
+          },
+          (error) => {
+            // Silently fail if not authorized (expected for other members)
+          }
+        );
+        unsubsStats.push(unsub);
+      }
+    });
+
     return () => {
       unsubPrayers();
       unsubLogs();
       unsubMessages();
+      unsubsStats.forEach(u => u());
     };
-  }, [user, church, membership]);
+  }, [user, church, membership, prayers.length]); // Use prayers.length to trigger re-checks for new authored items
 
   const addJournalEntry = (entry: { category: string, text: string }) => {
     if (!user) return;
@@ -197,7 +220,7 @@ export function useAppData() {
   const prayerLogs = [...churchLogs, ...personalLogs];
 
   return { 
-    user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages,
+    user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, prayerStats,
     addJournalEntry, addPersonalLog, toggleLocalBookmark
   };
 }
