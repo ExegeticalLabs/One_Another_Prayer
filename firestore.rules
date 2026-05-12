@@ -59,7 +59,7 @@ service cloud.firestore {
              data.email is string &&
              data.displayName is string &&
              (data.keys().hasAll(['approvedBy']) ? (data.approvedBy is string) : true) &&
-             (data.keys().hasAll(['approvedAt']) ? (data.approvedAt is number) : true);
+             (data.keys().hasAll(['approvedAt']) ? (data.approvedAt is timestamp) : true);
     }
 
     match /memberships/{membershipId} {
@@ -73,11 +73,11 @@ service cloud.firestore {
                     isValidId(membershipId) && 
                     isValidMembership(incoming()) && 
                     incoming().joinedAt == request.time &&
-                    incoming().role == 'member';
+                    (incoming().role == 'member' || incoming().role == 'elder' || incoming().role == 'admin');
 
       // Updates only by elders/admins
       allow update: if isElder(existing().churchId) || isAdmin();
-      allow delete: if isAdmin();
+      allow delete: if (isSignedIn() && request.auth.uid == membershipId) || isAdmin();
     }
 
     // CHURCHES
@@ -86,7 +86,7 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
              data.inviteCode is string && data.inviteCode.size() <= 64 &&
              data.inviteCodeEnabled is bool &&
-             data.createdAt is number;
+             data.createdAt is timestamp;
     }
 
     match /churches/{churchId} {

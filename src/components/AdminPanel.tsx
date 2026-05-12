@@ -32,11 +32,20 @@ export function AdminPanel({ prayers, currentUserId, currentUserName, churchId, 
     if (churchId) fetchMemberships();
   }, [churchId]);
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this prayer? This action cannot be undone.")) return;
+  const handleDelete = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
+    const btn = e.currentTarget;
+    if (btn.innerText === "Delete") {
+      btn.innerText = "Sure?";
+      setTimeout(() => { if (btn) btn.innerText = "Delete"; }, 3000);
+      return;
+    }
+    btn.innerText = "Deleting...";
     try {
       await deleteDoc(doc(db, `churches/${churchId}/prayers`, id));
     } catch (e) {
+      console.error(e);
+      btn.innerText = "Error";
+      setTimeout(() => { if (btn) btn.innerText = "Delete"; }, 3000);
       handleFirestoreError(e, OperationType.DELETE, `churches/${churchId}/prayers`);
     }
   };
@@ -66,7 +75,6 @@ export function AdminPanel({ prayers, currentUserId, currentUserName, churchId, 
       });
       setDmTarget(null);
       setDmText("");
-      alert("Pastoral message sent.");
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `churches/${churchId}/messages`);
     }
@@ -101,6 +109,172 @@ export function AdminPanel({ prayers, currentUserId, currentUserName, churchId, 
           style={{ flex: 1, padding: 12, borderRadius: 12, background: activeTab === 'users' ? 'var(--gold)' : 'var(--mutedCard)', border: 'none', color: activeTab === 'users' ? '#fff' : 'var(--faint)', fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 13 }}
         >
           Members
+        </button>
+        <button 
+          onClick={async (e) => {
+            const btn = e.currentTarget;
+            if (btn.innerText === "Seed Specs") {
+              btn.innerText = "Sure?";
+              setTimeout(() => { if (btn) btn.innerText = "Seed Specs"; }, 3000);
+              return;
+            }
+            btn.innerText = "Seeding...";
+            const testPrayers = [
+              {
+                text: "Praying for my mother's upcoming surgery next Tuesday.",
+                category: "health",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "Test User",
+                stats: { prayCount: 2, prayTime: 45 }
+              },
+              {
+                text: "Please pray for our family as we grieve the loss of my grandfather.",
+                category: "grief",
+                anon: true,
+                answered: false,
+                urgency: "ELEVATED",
+                triageReason: "Grief and loss flag",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 5, prayTime: 120 }
+              },
+              {
+                text: "Praise God! I finally found a new job after 6 months of searching.",
+                category: "gratitude",
+                anon: false,
+                answered: true,
+                urgency: "STANDARD",
+                status: "answered",
+                author: "Test User",
+                stats: { prayCount: 12, prayTime: 300 }
+              },
+              {
+                text: "Struggling with profound loneliness lately. Please pray for community.",
+                category: "spiritual growth",
+                anon: true,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 1, prayTime: 15 }
+              },
+              {
+                text: "Pray for my marriage, we are going through a really tough time and need God's intervention.",
+                category: "family",
+                anon: true,
+                answered: false,
+                urgency: "ELEVATED",
+                triageReason: "Marital distress flag",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 8, prayTime: 210 }
+              },
+              {
+                text: "I am having dark thoughts and feel like I can't go on. Please someone help.",
+                category: "ongoing burden",
+                anon: true,
+                answered: false,
+                urgency: "URGENT",
+                triageReason: "Severe distress / ideation",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 0, prayTime: 0 }
+              },
+              {
+                text: "Praying for the youth ministry retreat this weekend. May lives be transformed.",
+                category: "church body",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "Youth Pastor",
+                stats: { prayCount: 3, prayTime: 65 }
+              },
+              {
+                text: "Feeling distant from God. Want to rekindle my faith.",
+                category: "spiritual growth",
+                anon: true,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 0, prayTime: 0 }
+              },
+              {
+                text: "My boss is extremely hostile and it is affecting my health. Pray for a resolution.",
+                category: "work",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "John D.",
+                stats: { prayCount: 4, prayTime: 100 }
+              },
+              {
+                text: "A sensitive pastoral issue that an elder has hidden.",
+                category: "ongoing burden",
+                anon: true,
+                answered: false,
+                urgency: "ELEVATED",
+                status: "hidden",
+                author: "A Church Member",
+                stats: { prayCount: 0, prayTime: 0 }
+              },
+              {
+                text: "Archived prayer from months ago.",
+                category: "health",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "archived",
+                author: "Dave S.",
+                stats: { prayCount: 20, prayTime: 500 }
+              },
+              {
+                text: "My chronic back pain is really severe this week.",
+                category: "health",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "Sarah",
+                stats: { prayCount: 2, prayTime: 30 }
+              }
+            ];
+            const { setDoc } = await import('firebase/firestore');
+            
+            for (const p of testPrayers) {
+              const pRef = doc(collection(db, `churches/${churchId}/prayers`));
+              
+              await setDoc(pRef, {
+                churchId,
+                text: p.text,
+                category: p.category,
+                anon: p.anon,
+                answered: p.answered,
+                urgency: p.urgency,
+                triageReason: p.triageReason || null,
+                status: p.status,
+                authorId: "fake_author_id_" + Math.random().toString(36).substring(7),
+                author: p.author,
+                createdAt: serverTimestamp()
+              });
+              const statsRef = doc(db, `churches/${churchId}/prayers/${pRef.id}/internal/stats`);
+              await setDoc(statsRef, {
+                churchId,
+                prayCount: p.stats.prayCount,
+                prayTime: p.stats.prayTime
+              });
+            }
+            btn.innerText = "Done";
+            setTimeout(() => { if (btn) btn.innerText = "Seed Specs"; }, 3000);
+          }}
+          style={{ flex: 1, padding: 12, borderRadius: 12, background: 'var(--mutedCard)', border: 'none', color: 'var(--gold)', fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}
+        >
+          Seed Specs
         </button>
       </div>
 
@@ -141,7 +315,7 @@ export function AdminPanel({ prayers, currentUserId, currentUserName, churchId, 
                     <button onClick={() => toggleHide(p.id, p.status || 'approved')} style={{ background: 'none', border: 'none', color: 'var(--dim)', cursor: 'pointer', padding: 4 }}>
                        {p.status === 'hidden' ? <Eye size={16} /> : <EyeOff size={16} />}
                     </button>
-                    <button onClick={() => handleDelete(p.id)} style={{ background: 'none', border: 'none', color: '#e06060', cursor: 'pointer', padding: 4 }}>
+                    <button onClick={(e) => handleDelete(e, p.id)} style={{ background: 'none', border: 'none', color: '#e06060', cursor: 'pointer', padding: 4 }}>
                       <Trash2 size={16} />
                     </button>
                   </div>

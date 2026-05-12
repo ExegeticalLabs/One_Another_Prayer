@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Users, Wind, KeySquare, LogOut } from "lucide-react";
-import { collection, query, where, getDocs, setDoc, doc, serverTimestamp } from "firebase/firestore";
+import { collection, query, where, getDocs, setDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { db, auth, handleFirestoreError, OperationType } from "../lib/firebase";
 import { signOut } from "firebase/auth";
 
@@ -12,11 +12,204 @@ export function JoinChurchScreen({ membership, user, setNotif, theme }: any) {
     if (!inviteCode.trim()) return;
     setLoading(true);
     try {
+      if (inviteCode.trim() === "TEST") {
+        const churchId = "church_test_demo";
+        const churchRef = doc(db, "churches", churchId);
+        const churchSnap = await getDoc(churchRef);
+        
+        if (!churchSnap.exists()) {
+          await setDoc(churchRef, {
+             name: "Demo Church",
+             inviteCode: "TEST",
+             inviteCodeEnabled: true,
+             createdAt: serverTimestamp()
+          });
+
+          // MUST create membership before seeding prayers, otherwise rules reject
+          await setDoc(doc(db, "memberships", user.uid), {
+             userId: user.uid,
+             churchId: churchId,
+             displayName: user.displayName || "Unknown",
+             email: user.email || "",
+             role: "admin",
+             status: "active",
+             joinedAt: serverTimestamp()
+          });
+
+          // Seed some prayers for Demo Church
+          const testPrayers = [
+              {
+                text: "Praying for my mother's upcoming surgery next Tuesday.",
+                category: "health",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "Test User",
+                stats: { prayCount: 2, prayTime: 45 }
+              },
+              {
+                text: "Please pray for our family as we grieve the loss of my grandfather.",
+                category: "grief",
+                anon: true,
+                answered: false,
+                urgency: "ELEVATED",
+                triageReason: "Grief and loss flag",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 5, prayTime: 120 }
+              },
+              {
+                text: "Praise God! I finally found a new job after 6 months of searching.",
+                category: "gratitude",
+                anon: false,
+                answered: true,
+                urgency: "STANDARD",
+                status: "answered",
+                author: "Test User",
+                stats: { prayCount: 12, prayTime: 300 }
+              },
+              {
+                text: "Struggling with profound loneliness lately. Please pray for community.",
+                category: "spiritual growth",
+                anon: true,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 1, prayTime: 15 }
+              },
+              {
+                text: "Pray for my marriage, we are going through a really tough time and need God's intervention.",
+                category: "family",
+                anon: true,
+                answered: false,
+                urgency: "ELEVATED",
+                triageReason: "Marital distress flag",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 8, prayTime: 210 }
+              },
+              {
+                text: "I am having dark thoughts and feel like I can't go on. Please someone help.",
+                category: "ongoing burden",
+                anon: true,
+                answered: false,
+                urgency: "URGENT",
+                triageReason: "Severe distress / ideation",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 0, prayTime: 0 }
+              },
+              {
+                text: "Praying for the youth ministry retreat this weekend. May lives be transformed.",
+                category: "church body",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "Youth Pastor",
+                stats: { prayCount: 3, prayTime: 65 }
+              },
+              {
+                text: "Feeling distant from God. Want to rekindle my faith.",
+                category: "spiritual growth",
+                anon: true,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "A Church Member",
+                stats: { prayCount: 0, prayTime: 0 }
+              },
+              {
+                text: "My boss is extremely hostile and it is affecting my health. Pray for a resolution.",
+                category: "work",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "John D.",
+                stats: { prayCount: 4, prayTime: 100 }
+              },
+              {
+                text: "A sensitive pastoral issue that an elder has hidden.",
+                category: "ongoing burden",
+                anon: true,
+                answered: false,
+                urgency: "ELEVATED",
+                status: "hidden",
+                author: "A Church Member",
+                stats: { prayCount: 0, prayTime: 0 }
+              },
+              {
+                text: "Archived prayer from months ago.",
+                category: "health",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "archived",
+                author: "Dave S.",
+                stats: { prayCount: 20, prayTime: 500 }
+              },
+              {
+                text: "My chronic back pain is really severe this week.",
+                category: "health",
+                anon: false,
+                answered: false,
+                urgency: "STANDARD",
+                status: "active",
+                author: "Sarah",
+                stats: { prayCount: 2, prayTime: 30 }
+              }
+          ];
+
+          for (const p of testPrayers) {
+            const pRef = doc(collection(db, `churches/${churchId}/prayers`));
+
+            await setDoc(pRef, {
+              churchId,
+              text: p.text,
+              category: p.category,
+              anon: p.anon,
+              answered: p.answered,
+              urgency: p.urgency,
+              triageReason: p.triageReason || null,
+              status: p.status,
+              authorId: "fake_author_id_" + Math.random().toString(36).substring(7),
+              author: p.author,
+              createdAt: serverTimestamp()
+            });
+
+            const statsRef = doc(db, `churches/${churchId}/prayers/${pRef.id}/internal/stats`);
+            await setDoc(statsRef, {
+              churchId,
+              prayCount: p.stats.prayCount,
+              prayTime: p.stats.prayTime
+            });
+          }
+        } else {
+          // If the church already exists, we just create/update the membership for the user joining
+          await setDoc(doc(db, "memberships", user.uid), {
+             userId: user.uid,
+             churchId: churchId,
+             displayName: user.displayName || "Unknown",
+             email: user.email || "",
+             role: "admin",
+             status: "active",
+             joinedAt: serverTimestamp()
+          });
+        }
+        
+        setNotif("Welcome to your Demo Church! (Admin Access)");
+        setLoading(false);
+        return;
+      }
+
       const q = query(collection(db, "churches"), where("inviteCode", "==", inviteCode.trim()));
       const snap = await getDocs(q);
       
       if (snap.empty) {
-        setNotif("Invalid invite code.");
+        setNotif("Invalid invite code. Ensure you've run the seed script and try 'GRACE'.");
         setLoading(false);
         return;
       }
@@ -85,7 +278,8 @@ export function JoinChurchScreen({ membership, user, setNotif, theme }: any) {
               <KeySquare size={48} color="var(--gold)" style={{marginBottom: 20}} />
               <h2 style={{fontFamily: 'var(--sans)', fontSize: 24, fontWeight: 900, marginBottom: 12}}>Join Your Church</h2>
               <p style={{fontFamily: 'var(--serif)', fontSize: 16, marginBottom: 32, opacity: 0.8, lineHeight: 1.4}}>
-                 PrayerFeed is an invite-only community for local churches. Enter your church's invite code to access the feed.
+                 PrayerFeed is an invite-only community for local churches. Enter your church's invite code to access the feed.<br/><br/>
+                 <strong style={{color: 'var(--gold)'}}>Developer / Demo:</strong> Enter the code <strong>TEST</strong> to automatically create and join a demo church as an admin, or use <strong>GRACE</strong> if you ran the seed script.
               </p>
               
               <input 

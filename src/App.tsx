@@ -491,6 +491,33 @@ export default function App() {
             <button className="ghostBtn" onClick={() => setDash(true)}>
               <ClockIcon size={14} /> My Prayer Life
             </button>
+            <button 
+              className="ghostBtn" 
+              onClick={async (e) => {
+                const btn = e.currentTarget;
+                if (btn.innerText === "Leave") {
+                  btn.innerText = "Sure?";
+                  setTimeout(() => { if (btn) btn.innerText = "Leave"; }, 3000);
+                  return;
+                }
+                btn.innerText = "Leaving...";
+                try {
+                  await deleteDoc(doc(db, "memberships", user.uid));
+                  try {
+                    window.location.reload();
+                  } catch (e) {
+                    // Ignore if blocked in iframe, just wait for onSnapshot
+                  }
+                } catch (err: any) {
+                  console.error(err);
+                  btn.innerText = "Error";
+                  setTimeout(() => { if (btn) btn.innerText = "Leave"; }, 3000);
+                }
+              }} 
+              style={{ color: '#e06060' }}
+            >
+              Leave
+            </button>
             <button className="ghostBtn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}
             </button>

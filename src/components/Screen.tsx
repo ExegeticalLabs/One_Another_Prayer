@@ -1,5 +1,5 @@
 import React from "react";
 
-export function Screen({ children, prayingActive, key }: { children: React.ReactNode, prayingActive?: boolean, key?: React.Key }) {
+export const Screen: React.FC<{ children: React.ReactNode, prayingActive?: boolean }> = ({ children, prayingActive }) => {
   return <section className={`screen ${prayingActive ? 'praying-screen' : ''}`}>{children}</section>;
 }

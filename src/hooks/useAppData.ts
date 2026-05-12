@@ -70,6 +70,10 @@ export function useAppData() {
     const unsubMem = onSnapshot(doc(db, 'memberships', user.uid), async (snap) => {
       if (snap.exists()) {
         const memData = snap.data();
+        if (snap.metadata.hasPendingWrites && !memData.joinedAt) {
+          // Local creation uses serverTimestamp which is initially null. Wait for server confirmation to avoid permission-denied race conditions
+          return;
+        }
         setMembership(memData);
         
         // Listen to church

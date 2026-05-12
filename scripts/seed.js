@@ -40,6 +40,7 @@ async function seed() {
     batch.set(graceChurchRef, {
       name: "Grace Test Church",
       inviteCodeEnabled: true,
+      inviteCode: "GRACE",
       createdAt: FieldValue.serverTimestamp(),
       isTestData: true,
       testSeedVersion: "phase5-mvp-controlled-testing-v1",
@@ -50,6 +51,7 @@ async function seed() {
     batch.set(bethelChurchRef, {
       name: "Bethel Test Church",
       inviteCodeEnabled: true,
+      inviteCode: "BETHEL",
       createdAt: FieldValue.serverTimestamp(),
       isTestData: true,
       testSeedVersion: "phase5-mvp-controlled-testing-v1",
