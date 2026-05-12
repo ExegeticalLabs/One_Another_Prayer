@@ -90,8 +90,9 @@ export default function App() {
           });
         } catch (err) {
           // If doc doesn't exist (older prayers or first prayer), initialize it
-          // Rules allow create if active member
+          // Rules allow create if active member and prayCount <= 1
           await setDoc(statsRef, {
+            churchId: church.id,
             prayCount: 1,
             prayTime: elapsed
           });
@@ -146,6 +147,7 @@ export default function App() {
         
         // Initialize private stats
         await setDoc(doc(db, `churches/${church.id}/prayers/${prayerRef.id}/internal/stats`), {
+          churchId: church.id,
           prayCount: 0,
           prayTime: 0
         });
@@ -212,10 +214,8 @@ export default function App() {
     });
 
     // Balanced Rotation Logic:
-    // 1. Urgency (URGENT > ELEVATED > STANDARD)
-    // 2. Personal attention: Have I prayed for this in the last 24 hours?
-    // 3. Freshness (Newer first)
-    // 4. Quiet shuffle for variety
+    // We prioritize items the user has NOT prayed for today.
+    // Within those, we use a balanced mix of urgency and freshness.
     
     const userPrayedIds = new Set(
       prayerLogs
@@ -224,21 +224,17 @@ export default function App() {
     );
 
     return active.sort((a, b) => {
-      // Priority 1: Urgency
-      const uMap: Record<string, number> = { 'URGENT': 0, 'ELEVATED': 1, 'STANDARD': 2 };
-      const aU = uMap[a.urgency] ?? 2;
-      const bU = uMap[b.urgency] ?? 2;
-      if (aU !== bU) return aU - bU;
-
-      // Priority 2: Personal attention (things I haven't prayed for today)
+      // Primary: Personal attention (things I haven't prayed for today)
       const aPrayed = userPrayedIds.has(a.id);
       const bPrayed = userPrayedIds.has(b.id);
       if (aPrayed !== bPrayed) return aPrayed ? 1 : -1;
 
-      // Priority 3: Freshness
-      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-      return bTime - aTime;
+      // Secondary: Weighted urgency and age score
+      const uMap: Record<string, number> = { 'URGENT': 2, 'ELEVATED': 1, 'STANDARD': 0 };
+      const aScore = (uMap[a.urgency] ?? 0) * 1000000 + (a.createdAt?.toMillis || 0);
+      const bScore = (uMap[b.urgency] ?? 0) * 1000000 + (b.createdAt?.toMillis || 0);
+      
+      return bScore - aScore;
     });
   }, [prayers, prayerLogs]);
   
@@ -603,7 +599,7 @@ export default function App() {
                   ))}
                 </div>
                 <div style={{ marginTop: 40, fontSize: 11, color: 'var(--faint)', textAlign: 'center', maxWidth: 280, fontStyle: 'italic' }}>
-                   Reflections are stored locally on your device and are never sent to the server or visible to others.
+                   Journal entries are stored locally on this device/browser and are not sent to the server.
                 </div>
               </Screen>
             </>

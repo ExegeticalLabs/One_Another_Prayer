@@ -153,20 +153,21 @@ service cloud.firestore {
           allow list: if isElder(churchId) || isAdmin();
 
           function isValidStats(data) {
-            return data.keys().hasAll(['prayCount', 'prayTime']) &&
-                   data.prayCount is number &&
-                   data.prayTime is number;
+            return data.keys().hasAll(['prayCount', 'prayTime', 'churchId']) &&
+                   data.prayCount is number && data.prayCount >= 0 && data.prayCount <= 1 &&
+                   data.prayTime is number && data.prayTime >= 0 &&
+                   data.churchId == churchId;
           }
 
           allow create: if isActiveMember(churchId) && isValidStats(incoming());
           allow update: if (isActiveMember(churchId) &&
                         (
-                          // Regular members can only increment (write-only-like update)
+                          // Regular members can only increment by exactly 1
                           (incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
                            incoming().prayCount == existing().prayCount + 1 &&
                            incoming().prayTime >= existing().prayTime)
                           ||
-                          // Admins/Elders can do more if needed
+                          // Elders can fix data
                           isElder(churchId)
                         )) || isAdmin();
         }
