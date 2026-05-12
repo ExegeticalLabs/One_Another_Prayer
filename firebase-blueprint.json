@@ -1,10 +1,40 @@
 {
   "entities": {
+    "Church": {
+      "title": "Church",
+      "description": "A church community.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "inviteCode": { "type": "string" },
+        "inviteCodeEnabled": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["name", "inviteCode", "inviteCodeEnabled", "createdAt"]
+    },
+    "Membership": {
+      "title": "Membership",
+      "description": "User's association with a church.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "churchId": { "type": "string" },
+        "role": { "type": "string", "enum": ["member", "elder", "admin"] },
+        "status": { "type": "string", "enum": ["pending", "active", "denied", "suspended"] },
+        "joinedAt": { "type": "number" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "approvedAt": { "type": "number" }
+      },
+      "required": ["userId", "churchId", "role", "status", "joinedAt", "email", "displayName"]
+    },
     "Prayer": {
       "title": "Prayer",
       "description": "A prayer request submitted for the church.",
       "type": "object",
       "properties": {
+        "churchId": { "type": "string", "description": "The church this prayer belongs to." },
         "author": { "type": "string", "description": "Display name of the author or 'A Church Member'." },
         "authorId": { "type": "string", "description": "UID of the author." },
         "category": { "type": "string", "description": "Category of the prayer." },
@@ -19,13 +49,14 @@
         "triageReason": { "type": "string", "description": "AI reason for urgency level." },
         "status": { "type": "string", "enum": ["approved", "hidden"], "description": "Moderation status." }
       },
-      "required": ["author", "authorId", "category", "text", "createdAt", "anon", "answered"]
+      "required": ["churchId", "author", "authorId", "category", "text", "createdAt", "anon", "answered"]
     },
     "DirectMessage": {
       "title": "DirectMessage",
       "description": "Elder pastoral direct message.",
       "type": "object",
       "properties": {
+        "churchId": { "type": "string" },
         "fromId": { "type": "string" },
         "fromName": { "type": "string" },
         "toId": { "type": "string" },
@@ -34,7 +65,7 @@
         "createdAt": { "type": "number" },
         "read": { "type": "boolean" }
       },
-      "required": ["fromId", "fromName", "toId", "text", "createdAt", "read"]
+      "required": ["churchId", "fromId", "fromName", "toId", "text", "createdAt", "read"]
     },
     "PrayerLog": {
       "title": "PrayerLog",
@@ -74,13 +105,25 @@
     }
   },
   "firestore": {
+    "/churches/{churchId}": {
+      "schema": { "$ref": "#/entities/Church" },
+      "description": "Church communities."
+    },
+    "/memberships/{membershipId}": {
+      "schema": { "$ref": "#/entities/Membership" },
+      "description": "User memberships connecting users to churches."
+    },
+    "/churches/{churchId}/prayers/{prayerId}": {
+      "schema": { "$ref": "#/entities/Prayer" },
+      "description": "Global prayer requests shared with everyone in the church."
+    },
+    "/churches/{churchId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/DirectMessage" },
+      "description": "Direct pastoral messages between elders and members."
+    },
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
       "description": "User profile with role details."
-    },
-    "/prayers/{prayerId}": {
-      "schema": { "$ref": "#/entities/Prayer" },
-      "description": "Global prayer requests shared with everyone."
     },
     "/users/{userId}/logs/{logId}": {
       "schema": { "$ref": "#/entities/PrayerLog" },
@@ -89,10 +132,6 @@
     "/users/{userId}/bookmarks/{bookmarkId}": {
       "schema": { "$ref": "#/entities/Bookmark" },
       "description": "Private bookmarks."
-    },
-    "/messages/{messageId}": {
-      "schema": { "$ref": "#/entities/DirectMessage" },
-      "description": "Direct pastoral messages between elders and members."
     }
   }
 }

@@ -11,48 +11,51 @@ const URGENCY_STYLES: Record<string, any> = {
   STANDARD: { background: 'var(--border)', color: 'var(--dim)' }
 };
 
-export function AdminPanel({ prayers, currentUserId, currentUserName }: { prayers: any[], currentUserId: string, currentUserName?: string }) {
+export function AdminPanel({ prayers, currentUserId, currentUserName, churchId }: { prayers: any[], currentUserId: string, currentUserName?: string, churchId: string }) {
   const [activeTab, setActiveTab] = useState("prayers");
   const [users, setUsers] = useState<any[]>([]);
   const [dmTarget, setDmTarget] = useState<any>(null);
   const [dmText, setDmText] = useState("");
 
   useEffect(() => {
-    const fetchUsers = async () => {
+    const fetchMemberships = async () => {
       try {
-        const snap = await getDocs(collection(db, 'users'));
-        const u = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setUsers(u);
+        const { query, where } = await import('firebase/firestore');
+        const q = query(collection(db, 'memberships'), where('churchId', '==', churchId));
+        const snap = await getDocs(q);
+        const m = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setUsers(m);
       } catch (e) {
-        handleFirestoreError(e, OperationType.LIST, 'users');
+        handleFirestoreError(e, OperationType.LIST, 'memberships');
       }
     };
-    fetchUsers();
-  }, []);
+    if (churchId) fetchMemberships();
+  }, [churchId]);
 
   const handleDelete = async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this prayer? This action cannot be undone.")) return;
     try {
-      await deleteDoc(doc(db, 'prayers', id));
+      await deleteDoc(doc(db, `churches/${churchId}/prayers`, id));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'prayers');
+      handleFirestoreError(e, OperationType.DELETE, `churches/${churchId}/prayers`);
     }
   };
 
   const toggleHide = async (id: string, currentStatus: string) => {
     try {
-      await updateDoc(doc(db, 'prayers', id), {
+      await updateDoc(doc(db, `churches/${churchId}/prayers`, id), {
         status: currentStatus === 'hidden' ? 'approved' : 'hidden'
       });
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'prayers');
+      handleFirestoreError(e, OperationType.UPDATE, `churches/${churchId}/prayers`);
     }
   };
 
   const sendDM = async () => {
     if (!dmText.trim() || !dmTarget) return;
     try {
-      await addDoc(collection(db, 'messages'), {
+      await addDoc(collection(db, `churches/${churchId}/messages`), {
+        churchId,
         fromId: currentUserId,
         fromName: currentUserName || "An Elder",
         toId: dmTarget.authorId,
@@ -65,17 +68,17 @@ export function AdminPanel({ prayers, currentUserId, currentUserName }: { prayer
       setDmText("");
       alert("Pastoral message sent.");
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'messages');
+      handleFirestoreError(e, OperationType.CREATE, `churches/${churchId}/messages`);
     }
   };
 
   const getUserName = (authorId: string) => {
-    const u = users.find(x => x.id === authorId);
+    const u = users.find(x => x.userId === authorId);
     return u ? u.displayName : 'Unknown Member';
   };
 
   const getEmail = (authorId: string) => {
-    const u = users.find(x => x.id === authorId);
+    const u = users.find(x => x.userId === authorId);
     return u ? u.email : '';
   };
 
@@ -190,7 +193,7 @@ export function AdminPanel({ prayers, currentUserId, currentUserName }: { prayer
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, fontFamily: 'var(--sans)', fontWeight: 700, color: 'var(--text)' }}>
-                  {u.displayName} {u.id === currentUserId && <span style={{ color: 'var(--faint)', fontWeight: 400 }}>(You)</span>}
+                  {u.displayName} {u.userId === currentUserId && <span style={{ color: 'var(--faint)', fontWeight: 400 }}>(You)</span>}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--dim)' }}>{u.email}</div>
               </div>

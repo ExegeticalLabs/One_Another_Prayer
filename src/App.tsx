@@ -21,11 +21,13 @@ import { Modal } from './components/Modal';
 import { AdminPanel } from './components/AdminPanel';
 import { triagePrayer } from './services/aiService';
 
+import { JoinChurchScreen } from './components/JoinChurchScreen';
+
 export default function App() {
   const [theme, setTheme] = useLS("pf_theme", "dark");
   const [tab, setTab] = useState("feed");
   
-  const { user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, messages, addJournalEntry, addPersonalLog, toggleLocalBookmark } = useAppData();
+  const { user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages, addJournalEntry, addPersonalLog, toggleLocalBookmark } = useAppData();
 
   const [goals] = useLS<any>("pf_goals_v9", { church: { mins: 10, count: 5, needs: 3 }, personal: { mins: 5, count: 3 } });
 
@@ -80,7 +82,7 @@ export default function App() {
         });
         
         // Atomically increment the global stats for the prayer
-        await updateDoc(doc(db, 'prayers', id), {
+        await updateDoc(doc(db, `churches/${church.id}/prayers`, id), {
           prayCount: increment(1),
           prayTime: increment(elapsed)
         });
@@ -119,7 +121,8 @@ export default function App() {
         triggerNotif("Analyzing prayer...");
         const triage = await triagePrayer(composeText.trim());
         
-        await addDoc(collection(db, 'prayers'), {
+        await addDoc(collection(db, `churches/${church.id}/prayers`), {
+          churchId: church.id,
           author: composeAnon ? "A Church Member" : user.displayName || "You",
           authorId: user.uid,
           category: triage.suggestedCategory || composeCat,
@@ -158,7 +161,7 @@ export default function App() {
     if (!markAnsweredPrompt || !user) return;
     try {
       const { doc, updateDoc } = await import('firebase/firestore');
-      await updateDoc(doc(db, 'prayers', markAnsweredPrompt.id), {
+      await updateDoc(doc(db, `churches/${church.id}/prayers`, markAnsweredPrompt.id), {
         answered: true,
         answerNote: answerNote.trim() || ""
       });
@@ -180,17 +183,30 @@ export default function App() {
   const markMessageRead = async (id: string) => {
     try {
       const { doc, updateDoc } = await import('firebase/firestore');
-      await updateDoc(doc(db, 'messages', id), { read: true });
+      await updateDoc(doc(db, `churches/${church.id}/messages`, id), { read: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'messages');
+      handleFirestoreError(e, OperationType.UPDATE, `churches/${church.id}/messages`);
     }
   };
 
-  const feed = useMemo(() => prayers.filter((p) => {
-    if (p.answered || p.status === 'hidden') return false;
-    const t = p.createdAt?.toMillis ? p.createdAt.toMillis() : (p.createdAt || Date.now());
-    return (Date.now() - t) < 7 * 86400000;
-  }), [prayers]);
+  const feed = useMemo(() => {
+    const active = prayers.filter((p) => {
+      if (p.answered || p.status === 'hidden') return false;
+      const t = p.createdAt?.toMillis ? p.createdAt.toMillis() : (p.createdAt || Date.now());
+      return (Date.now() - t) < 7 * 86400000;
+    });
+
+    // Quietly sort to prioritize un-prayed for items (balanced attention)
+    // We sort by prayCount ascending, then by age (newer first)
+    return active.sort((a, b) => {
+      const aCount = a.prayCount || 0;
+      const bCount = b.prayCount || 0;
+      if (aCount !== bCount) return aCount - bCount;
+      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      return bTime - aTime;
+    });
+  }, [prayers]);
   
   const wall = useMemo(() => prayers.filter((p) => {
     if (p.status === 'hidden') return false;
@@ -282,6 +298,14 @@ export default function App() {
         {notif && <div style={{ marginTop: 16, fontSize: 14, color: '#e06060', fontWeight: 'bold' }}>{notif}</div>}
       </div>
     );
+  }
+
+  if (membership === undefined) {
+    return <div className="app" data-theme={theme} style={{display:'flex', alignItems:'center', justifyContent:'center', color: 'var(--text)'}}>Loading your community...</div>;
+  }
+
+  if (!church || membership?.status !== 'active') {
+    return <JoinChurchScreen membership={membership} user={user} setNotif={triggerNotif} theme={theme} />;
   }
 
   return (
@@ -426,18 +450,7 @@ export default function App() {
       <header className="header">
         <div className="titleRow">
           <div className="brandWrap">
-            <h1 className="h1" onDoubleClick={async () => {
-              if (userProfile?.role !== 'admin' && userProfile?.email) {
-                 try {
-                   const { doc, updateDoc } = await import('firebase/firestore');
-                   await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
-                   triggerNotif("Role elevated to Admin. Refreshing...");
-                   setTimeout(() => window.location.reload(), 1500);
-                 } catch (e) {
-                   console.error("Elevation failed", e);
-                 }
-              }
-            }}>One Another</h1>
+            <h1 className="h1">One Another</h1>
             <div className="sub">by Koinonia</div>
           </div>
           <div className="hdrBtns">
@@ -461,7 +474,7 @@ export default function App() {
           <button className={`tab ${tab === "journal" ? "active" : ""}`} onClick={() => setTab("journal")}>Journal</button>
           <button className={`tab ${tab === "wall" ? "active" : ""}`} onClick={() => setTab("wall")}>Answered</button>
           <button className={`tab ${tab === "bookmarks" ? "active" : ""}`} onClick={() => setTab("bookmarks")}>Bookmarks</button>
-          {userProfile?.role === "admin" && (
+          {(membership?.role === "admin" || membership?.role === "elder") && (
             <button className={`tab ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")} style={{ color: tab === "admin" ? 'var(--gold)' : undefined }}>Elder</button>
           )}
         </nav>
@@ -472,7 +485,7 @@ export default function App() {
       <main className="content">
         <div className="snap">
           {tab === "admin" ? (
-             <AdminPanel prayers={prayers} currentUserId={user.uid} currentUserName={user.displayName || "Admin"} />
+             <AdminPanel prayers={prayers} currentUserId={user.uid} currentUserName={user.displayName || "Admin"} churchId={church.id} />
           ) : tab === "feed" ? (
             feed.length ? (
               feed.map((p, i) => (

@@ -1,10 +1,18 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 
 export function HoldButton({ onComplete }: { onComplete: (elapsed: number) => void }) {
   const [isPraying, setIsPraying] = useState(false);
   const [localDur, setLocalDur] = useState(0);
+  const [tooShort, setTooShort] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const timerRef = useRef<{ start: number, raf: number | null }>({ start: 0, raf: null });
+
+  useEffect(() => {
+    if (tooShort) {
+      const t = setTimeout(() => setTooShort(false), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [tooShort]);
 
   const handleStart = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
@@ -12,6 +20,7 @@ export function HoldButton({ onComplete }: { onComplete: (elapsed: number) => vo
     
     setIsPraying(true);
     setLocalDur(0);
+    setTooShort(false);
     timerRef.current.start = performance.now();
 
     const tick = () => {
@@ -27,8 +36,10 @@ export function HoldButton({ onComplete }: { onComplete: (elapsed: number) => vo
     if (timerRef.current.raf) cancelAnimationFrame(timerRef.current.raf);
     
     const finalElapsed = Math.floor((performance.now() - timerRef.current.start) / 1000);
-    if (finalElapsed >= 2) {
+    if (finalElapsed >= 3) {
       onComplete(finalElapsed);
+    } else if (finalElapsed > 0) {
+      setTooShort(true);
     }
 
     setIsPraying(false);
@@ -51,7 +62,8 @@ export function HoldButton({ onComplete }: { onComplete: (elapsed: number) => vo
       >
         {isPraying ? <span className="holdTime">{localDur}</span> : <span className="holdLabel">Pray</span>}
       </button>
-      {isPraying && <div className="prayingText">Praying...</div>}
+      {isPraying && !tooShort && <div className="prayingText">Praying...</div>}
+      {tooShort && <div className="prayingText" style={{ color: '#e06060' }}>Hold longer to pray</div>}
     </div>
   );
 }

@@ -12,6 +12,9 @@ export function useAppData() {
   const [journal, setJournal] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   
+  const [membership, setMembership] = useState<any>(undefined);
+  const [church, setChurch] = useState<any>(undefined);
+
   // Church logs fetched from Firebase
   const [churchLogs, setChurchLogs] = useState<any[]>([]);
   // Personal logs kept locally
@@ -47,12 +50,48 @@ export function useAppData() {
         }
       } else {
         setUserProfile(null);
+        setMembership(null);
+        setChurch(null);
       }
       
       setAuthReady(true);
     });
     return () => unsub();
   }, []);
+
+  // Membership & Church listener
+  useEffect(() => {
+    if (!user) return;
+    
+    let unsubChurch = () => {};
+    
+    // Listen to membership
+    const unsubMem = onSnapshot(doc(db, 'memberships', user.uid), async (snap) => {
+      if (snap.exists()) {
+        const memData = snap.data();
+        setMembership(memData);
+        
+        // Listen to church
+        unsubChurch = onSnapshot(doc(db, 'churches', memData.churchId), (cSnap) => {
+           if (cSnap.exists()) {
+             setChurch({ id: cSnap.id, ...cSnap.data() });
+           } else {
+             setChurch(null);
+           }
+        }, (err) => console.error(err));
+      } else {
+        setMembership(null);
+        setChurch(null);
+      }
+    }, (error) => {
+      console.error("Membership error:", error);
+    });
+    
+    return () => {
+      unsubMem();
+      unsubChurch();
+    };
+  }, [user]);
 
   // Set up local storage sources
   useEffect(() => {
@@ -73,20 +112,21 @@ export function useAppData() {
 
   // Firestore Listeners
   useEffect(() => {
-    if (!user) {
+    if (!user || !church || membership?.status !== 'active') {
       setPrayers([]);
       setChurchLogs([]);
       setBookmarks([]);
+      setMessages([]);
       return;
     }
     
     const unsubPrayers = onSnapshot(
-      query(collection(db, 'prayers'), orderBy('createdAt', 'desc')),
+      query(collection(db, `churches/${church.id}/prayers`), orderBy('createdAt', 'desc')),
       (snap) => {
         const p = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setPrayers(p);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'prayers')
+      (error) => handleFirestoreError(error, OperationType.LIST, `churches/${church.id}/prayers`)
     );
 
     const unsubLogs = onSnapshot(
@@ -99,12 +139,12 @@ export function useAppData() {
     );
 
     const unsubMessages = onSnapshot(
-      query(collection(db, `messages`), where('toId', '==', user.uid)),
+      query(collection(db, `churches/${church.id}/messages`), where('toId', '==', user.uid)),
       (snap) => {
         const m = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a: any, b: any) => (b.createdAt?.toMillis ? b.createdAt.toMillis() : Date.now()) - (a.createdAt?.toMillis ? a.createdAt.toMillis() : Date.now()));
         setMessages(m);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, `messages`)
+      (error) => handleFirestoreError(error, OperationType.LIST, `churches/${church.id}/messages`)
     );
 
     return () => {
@@ -112,7 +152,7 @@ export function useAppData() {
       unsubLogs();
       unsubMessages();
     };
-  }, [user]);
+  }, [user, church, membership]);
 
   const addJournalEntry = (entry: { category: string, text: string }) => {
     if (!user) return;
@@ -157,7 +197,7 @@ export function useAppData() {
   const prayerLogs = [...churchLogs, ...personalLogs];
 
   return { 
-    user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, messages,
+    user, userProfile, authReady, church, membership, prayers, journal, prayerLogs, bookmarks, messages,
     addJournalEntry, addPersonalLog, toggleLocalBookmark
   };
 }

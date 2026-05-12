@@ -19,6 +19,22 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
     }
 
+    // Role Checks
+    function activeMembership(churchId) {
+      // Find the membership for this user and church
+      // In a real app, this might use a custom claim or we'd just require passing the membershipId.
+      // Firestore rules don't support arbitrary querying in rules without `get()` on specific doc.
+      // So we MUST construct a stable document ID for memberships: e.g. userId_churchId, or just userId if 1 church per user.
+      // Let's assume document ID is userId for MVP (1 church per user max)
+      return get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data;
+    }
+    function isActiveMember(churchId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/memberships/$(request.auth.uid)) && activeMembership(churchId).churchId == churchId && activeMembership(churchId).status == 'active';
+    }
+    function isElder(churchId) {
+      return isActiveMember(churchId) && (activeMembership(churchId).role == 'elder' || activeMembership(churchId).role == 'admin');
+    }
+
     function isValidUser(data) {
       return data.keys().hasAll(['email', 'displayName', 'role', 'createdAt']) &&
              data.email is string &&
@@ -28,62 +44,148 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
-      allow list: if isAdmin(); // Only admins can list users
+      allow list: if isAdmin();
       allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
-      // Note: Users cannot change their own roles. Admins can update.
       allow update: if (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email'])) || isAdmin();
       allow delete: if isAdmin();
     }
 
-    function isValidPrayer(data) {
-      return data.keys().hasAll(['author', 'authorId', 'category', 'text', 'createdAt', 'anon', 'answered']) &&
-             data.author is string && data.author.size() <= 64 &&
-             data.authorId == request.auth.uid &&
-             data.category is string && data.category.size() <= 64 &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 4096 &&
-             data.anon is bool &&
-             data.answered is bool &&
-             (data.keys().hasAll(['status']) ? (data.status in ['approved', 'hidden']) : true) &&
-             (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true) &&
-             (data.keys().hasAll(['prayCount']) ? (data.prayCount is number) : true) &&
-             (data.keys().hasAll(['prayTime']) ? (data.prayTime is number) : true) &&
-             (data.keys().hasAll(['urgency']) ? (data.urgency in ['URGENT', 'ELEVATED', 'STANDARD']) : true) &&
-             (data.keys().hasAll(['triageReason']) ? (data.triageReason is string) : true);
+    function isValidMembership(data) {
+      return data.keys().hasAll(['userId', 'churchId', 'role', 'status', 'joinedAt', 'email', 'displayName']) &&
+             data.userId == request.auth.uid &&
+             data.churchId is string &&
+             data.role in ['member', 'elder', 'admin'] &&
+             data.status in ['pending', 'active', 'denied', 'suspended'] &&
+             data.email is string &&
+             data.displayName is string &&
+             (data.keys().hasAll(['approvedBy']) ? (data.approvedBy is string) : true) &&
+             (data.keys().hasAll(['approvedAt']) ? (data.approvedAt is number) : true);
     }
 
-    match /prayers/{prayerId} {
-      allow get: if isSignedIn() && isValidId(prayerId);
-      allow list: if isSignedIn(); // All signed in users can list public prayers
+    match /memberships/{membershipId} {
+      // User can see their own. Elders can list. But how do we restrict list to just elders?
+      // Since `list` is evaluating resource.data, we can do it!
+      allow get: if isSignedIn() && (request.auth.uid == membershipId || isElder(resource.data.churchId) || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isElder(resource.data.churchId) || isAdmin());
       
-      allow create: if isSignedIn() &&
-                    isValidId(prayerId) &&
-                    isValidPrayer(incoming()) &&
-                    incoming().createdAt == request.time &&
-                    incoming().answered == false;
-                    
-      allow update: if (isSignedIn() &&
-                    isValidId(prayerId) &&
-                    existing().answered == false && // terminal state locking
-                    (
-                      // Action: Poster editing fields
+      allow create: if isSignedIn() && 
+                    membershipId == request.auth.uid &&
+                    isValidId(membershipId) && 
+                    isValidMembership(incoming()) && 
+                    incoming().joinedAt == request.time &&
+                    incoming().role == 'member';
+
+      // Updates only by elders/admins
+      allow update: if isElder(existing().churchId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // CHURCHES
+    function isValidChurch(data) {
+      return data.keys().hasAll(['name', 'inviteCode', 'inviteCodeEnabled', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
+             data.inviteCode is string && data.inviteCode.size() <= 64 &&
+             data.inviteCodeEnabled is bool &&
+             data.createdAt is number;
+    }
+
+    match /churches/{churchId} {
+      allow get: if isSignedIn(); 
+      allow list: if isSignedIn(); // Let users query by inviteCode
+      allow create: if isSignedIn() && isValidId(churchId) && isValidChurch(incoming()) && incoming().createdAt == request.time;
+      allow update: if isElder(churchId) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'inviteCode', 'inviteCodeEnabled']);
+      allow delete: if isAdmin();
+
+      function isValidPrayer(data) {
+        return data.keys().hasAll(['churchId', 'author', 'authorId', 'category', 'text', 'createdAt', 'anon', 'answered']) &&
+               data.churchId == churchId &&
+               data.author is string && data.author.size() <= 64 &&
+               data.authorId == request.auth.uid &&
+               data.category is string && data.category.size() <= 64 &&
+               data.text is string && data.text.size() > 0 && data.text.size() <= 4096 &&
+               data.anon is bool &&
+               data.answered is bool &&
+               (data.keys().hasAll(['status']) ? (data.status in ['approved', 'hidden']) : true) &&
+               (data.keys().hasAll(['answerNote']) ? (data.answerNote is string && data.answerNote.size() <= 1024) : true) &&
+               (data.keys().hasAll(['prayCount']) ? (data.prayCount is number) : true) &&
+               (data.keys().hasAll(['prayTime']) ? (data.prayTime is number) : true) &&
+               (data.keys().hasAll(['urgency']) ? (data.urgency in ['URGENT', 'ELEVATED', 'STANDARD']) : true) &&
+               (data.keys().hasAll(['triageReason']) ? (data.triageReason is string) : true);
+      }
+
+      match /prayers/{prayerId} {
+        allow get: if isActiveMember(churchId) && isValidId(prayerId);
+        allow list: if isActiveMember(churchId);
+        
+        allow create: if isActiveMember(churchId) &&
+                      isValidId(prayerId) &&
+                      isValidPrayer(incoming()) &&
+                      incoming().createdAt == request.time &&
+                      incoming().answered == false;
+                      
+        allow update: if (isActiveMember(churchId) &&
+                      isValidId(prayerId) &&
+                      existing().answered == false && // terminal state locking
                       (
-                        existing().authorId == request.auth.uid &&
-                        isValidPrayer(incoming()) &&
-                        incoming().authorId == existing().authorId &&
-                        incoming().createdAt == existing().createdAt &&
-                        incoming().diff(existing()).affectedKeys().hasOnly(['answered', 'answerNote', 'text', 'category']) &&
-                        (incoming().answered == true || incoming().answered == false)
-                      ) 
-                      ||
-                      // Action: Anyone Praying (Increment)
-                      (
-                        incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
-                        incoming().prayCount == existing().prayCount + 1 &&
-                        incoming().prayTime >= existing().prayTime
-                      )
-                    )) || isAdmin();
-                    
-      allow delete: if (isSignedIn() && isValidId(prayerId) && existing().authorId == request.auth.uid) || isAdmin();
+                        // Action: Poster editing fields
+                        (
+                          existing().authorId == request.auth.uid &&
+                          isValidPrayer(incoming()) &&
+                          incoming().authorId == existing().authorId &&
+                          incoming().createdAt == existing().createdAt &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['answered', 'answerNote', 'text', 'category']) &&
+                          (incoming().answered == true || incoming().answered == false)
+                        ) 
+                        ||
+                        // Action: Anyone Praying (Increment)
+                        (
+                          incoming().diff(existing()).affectedKeys().hasOnly(['prayCount', 'prayTime']) &&
+                          incoming().prayCount == existing().prayCount + 1 &&
+                          incoming().prayTime >= existing().prayTime
+                        )
+                        ||
+                        // Action: Elder Hidden Toggle
+                        (
+                          isElder(churchId) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+                          incoming().status in ['approved', 'hidden']
+                        )
+                      )) || isAdmin();
+                      
+        allow delete: if (isActiveMember(churchId) && isValidId(prayerId) && existing().authorId == request.auth.uid) || isElder(churchId) || isAdmin();
+      }
+
+      function isValidDirectMessage(data) {
+        return data.keys().hasAll(['churchId', 'fromId', 'fromName', 'toId', 'prayerId', 'text', 'createdAt', 'read']) &&
+               data.churchId == churchId &&
+               data.fromId == request.auth.uid &&
+               data.fromName is string && data.fromName.size() <= 64 &&
+               data.toId is string && data.toId.size() <= 128 &&
+               data.prayerId is string && data.prayerId.size() <= 128 &&
+               data.text is string && data.text.size() > 0 && data.text.size() <= 2000 &&
+               data.read is bool;
+      }
+
+      match /messages/{messageId} {
+        allow get: if isActiveMember(churchId) && (existing().toId == request.auth.uid || isElder(churchId));
+        allow list: if isActiveMember(churchId) && (resource.data.toId == request.auth.uid || isElder(churchId));
+        
+        // Only admins/elders can create a direct message
+        allow create: if isElder(churchId) && 
+                      isValidId(messageId) &&
+                      isValidDirectMessage(incoming()) &&
+                      incoming().createdAt == request.time &&
+                      incoming().read == false;
+        
+        // Members can only update the read status of their own messages
+        allow update: if isActiveMember(churchId) &&
+                      existing().toId == request.auth.uid &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+                      incoming().read == true;
+                      
+        allow delete: if isElder(churchId);
+      }
     }
 
     function isValidPrayerLog(data) {
@@ -109,7 +211,6 @@ service cloud.firestore {
                     isValidId(logId) && 
                     isValidPrayerLog(incoming()) &&
                     incoming().createdAt == request.time;
-      // Logs are immutable
       allow update: if false;
       allow delete: if isOwner(userId) && isValidId(logId);
     }
@@ -121,39 +222,8 @@ service cloud.firestore {
                     isValidId(bookmarkId) && 
                     isValidBookmark(incoming()) &&
                     incoming().createdAt == request.time;
-      // Bookmarks are immutable records
       allow update: if false;
       allow delete: if isOwner(userId) && isValidId(bookmarkId);
-    }
-
-    function isValidDirectMessage(data) {
-      return data.keys().hasAll(['fromId', 'fromName', 'toId', 'prayerId', 'text', 'createdAt', 'read']) &&
-             data.fromId == request.auth.uid &&
-             data.fromName is string && data.fromName.size() <= 64 &&
-             data.toId is string && data.toId.size() <= 128 &&
-             data.prayerId is string && data.prayerId.size() <= 128 &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 2000 &&
-             data.read is bool;
-    }
-
-    match /messages/{messageId} {
-      allow get: if isSignedIn() && (existing().toId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.toId == request.auth.uid || isAdmin());
-      
-      // Only admins/elders can create a direct message
-      allow create: if isAdmin() && 
-                    isValidId(messageId) &&
-                    isValidDirectMessage(incoming()) &&
-                    incoming().createdAt == request.time &&
-                    incoming().read == false;
-      
-      // Members can only update the read status of their own messages
-      allow update: if isSignedIn() &&
-                    existing().toId == request.auth.uid &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
-                    incoming().read == true;
-                    
-      allow delete: if isAdmin();
     }
   }
 }
