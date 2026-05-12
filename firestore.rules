@@ -11,9 +11,28 @@ service cloud.firestore {
     function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
     function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isAdmin() { 
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'; 
+    }
     
     function isValidId(id) { 
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'displayName', 'role', 'createdAt']) &&
+             data.email is string &&
+             data.displayName is string &&
+             data.role in ['member', 'admin'];
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin(); // Only admins can list users
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
+      // Note: Users cannot change their own roles. Admins can update.
+      allow update: if (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email'])) || isAdmin();
+      allow delete: if isAdmin();
     }
 
     function isValidPrayer(data) {
@@ -39,7 +58,7 @@ service cloud.firestore {
                     incoming().createdAt == request.time &&
                     incoming().answered == false;
                     
-      allow update: if isSignedIn() &&
+      allow update: if (isSignedIn() &&
                     isValidId(prayerId) &&
                     existing().answered == false && // terminal state locking
                     (
@@ -59,9 +78,9 @@ service cloud.firestore {
                         incoming().prayCount == existing().prayCount + 1 &&
                         incoming().prayTime >= existing().prayTime
                       )
-                    );
+                    )) || isAdmin();
                     
-      allow delete: if isSignedIn() && isValidId(prayerId) && existing().authorId == request.auth.uid;
+      allow delete: if (isSignedIn() && isValidId(prayerId) && existing().authorId == request.auth.uid) || isAdmin();
     }
 
     function isValidPrayerLog(data) {

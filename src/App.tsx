@@ -18,12 +18,13 @@ import { Screen } from './components/Screen';
 import { CategoryPill } from './components/CategoryPill';
 import { FitnessRing } from './components/FitnessRing';
 import { Modal } from './components/Modal';
+import { AdminPanel } from './components/AdminPanel';
 
 export default function App() {
   const [theme, setTheme] = useLS("pf_theme", "dark");
   const [tab, setTab] = useState("feed");
   
-  const { user, authReady, prayers, journal, prayerLogs, bookmarks, addJournalEntry, addPersonalLog } = useAppData();
+  const { user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, addJournalEntry, addPersonalLog } = useAppData();
 
   const [goals] = useLS<any>("pf_goals_v9", { church: { mins: 10, count: 5, needs: 3 }, personal: { mins: 5, count: 3 } });
 
@@ -394,7 +395,18 @@ export default function App() {
       <header className="header">
         <div className="titleRow">
           <div className="brandWrap">
-            <h1 className="h1">One Another</h1>
+            <h1 className="h1" onDoubleClick={async () => {
+              if (userProfile?.role !== 'admin' && userProfile?.email) {
+                 try {
+                   const { doc, updateDoc } = await import('firebase/firestore');
+                   await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
+                   triggerNotif("Role elevated to Admin. Refreshing...");
+                   setTimeout(() => window.location.reload(), 1500);
+                 } catch (e) {
+                   console.error("Elevation failed", e);
+                 }
+              }
+            }}>One Another</h1>
             <div className="sub">by Koinonia</div>
           </div>
           <div className="hdrBtns">
@@ -414,6 +426,9 @@ export default function App() {
           <button className={`tab ${tab === "journal" ? "active" : ""}`} onClick={() => setTab("journal")}>Journal</button>
           <button className={`tab ${tab === "wall" ? "active" : ""}`} onClick={() => setTab("wall")}>Answered</button>
           <button className={`tab ${tab === "bookmarks" ? "active" : ""}`} onClick={() => setTab("bookmarks")}>Bookmarks</button>
+          {userProfile?.role === "admin" && (
+            <button className={`tab ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")} style={{ color: tab === "admin" ? 'var(--gold)' : undefined }}>Elder</button>
+          )}
         </nav>
       </header>
 
@@ -421,7 +436,9 @@ export default function App() {
 
       <main className="content">
         <div className="snap">
-          {tab === "feed" ? (
+          {tab === "admin" ? (
+             <AdminPanel prayers={prayers} currentUserId={user.uid} />
+          ) : tab === "feed" ? (
             feed.length ? (
               feed.map((p, i) => (
                 <Screen key={p.id}>

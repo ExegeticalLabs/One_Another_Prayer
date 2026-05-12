@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 
 export function useAppData() {
   const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [authReady, setAuthReady] = useState(false);
 
   const [prayers, setPrayers] = useState<any[]>([]);
@@ -19,8 +20,33 @@ export function useAppData() {
 
   // Auth Listener
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
+      
+      if (u) {
+        try {
+          const uDocRef = doc(db, 'users', u.uid);
+          const uDocSnap = await getDoc(uDocRef);
+          
+          if (!uDocSnap.exists()) {
+            const newProfile = {
+              email: u.email || '',
+              displayName: u.displayName || 'Unknown',
+              role: 'member',
+              createdAt: serverTimestamp()
+            };
+            await setDoc(uDocRef, newProfile);
+            setUserProfile(newProfile);
+          } else {
+            setUserProfile(uDocSnap.data());
+          }
+        } catch(e) {
+          console.error("Error fetching user profile:", e);
+        }
+      } else {
+        setUserProfile(null);
+      }
+      
       setAuthReady(true);
     });
     return () => unsub();
@@ -115,7 +141,7 @@ export function useAppData() {
   const prayerLogs = [...churchLogs, ...personalLogs];
 
   return { 
-    user, authReady, prayers, journal, prayerLogs, bookmarks, 
+    user, userProfile, authReady, prayers, journal, prayerLogs, bookmarks, 
     addJournalEntry, addPersonalLog 
   };
 }

@@ -31,6 +31,18 @@
       },
       "required": ["userId", "prayerId", "type", "durationSec", "createdAt"]
     },
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["member", "admin"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["email", "displayName", "role", "createdAt"]
+    },
     "Bookmark": {
       "title": "Bookmark",
       "description": "A user's bookmark to a specific prayer.",
@@ -44,6 +56,10 @@
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile with role details."
+    },
     "/prayers/{prayerId}": {
       "schema": { "$ref": "#/entities/Prayer" },
       "description": "Global prayer requests shared with everyone."
